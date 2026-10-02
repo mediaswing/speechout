@@ -10,6 +10,8 @@ the app.
 
 ## [Unreleased]
 
+## [1.6.0] - 2026-10-02
+
 ### Changed
 
 - On Windows, HEIC photos (the format iPhones use) now open without
