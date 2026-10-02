@@ -10,6 +10,8 @@ the app.
 
 ## [Unreleased]
 
+## [1.8.0] - 2026-10-03
+
 ### Added
 
 - The app can now be used in about 30 languages besides English, including
