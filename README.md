@@ -36,8 +36,10 @@ automatically.
 | --- | --- |
 | Current file | Shows the file you chose. |
 | Choose a file… | Opens a PDF, TXT, DOCX, JPEG or HEIC file. Photos are described by the local AI model. |
-| Speech service | System voices, plus any cloud service with a saved API key. |
-| Voice | The voice to use. |
+| Speech service | System voices, plus any cloud service with a saved API key. A line underneath says whether speech is made on your computer or your text is sent to the service. |
+| Voice | The voice to use. The app remembers the voice you chose for each service. |
+| Speaking speed | Only for ElevenLabs (0.7 to 1.2 times normal speed) and Deepgram Aura (0.7 to 1.5 times). Remembered for each service. |
+| Preview voice | Speaks "This is a preview of the selected voice." with the chosen voice and speed. |
 | Read aloud / Pause / Stop | Controls speech. |
 | Audio file format | MP3 or WAV. |
 | Save spoken text as audio… | Renders the whole text to a file. |
@@ -98,7 +100,10 @@ them, so don't save keys on a shared account.
 ## Privacy
 
 - Documents are read on your computer. With a cloud voice, the text is sent to
-  that service to be spoken.
+  that service to be spoken. When you read aloud or save audio with a cloud
+  voice, the status line says how many characters will be sent, so you can
+  judge the cost. Reading aloud only sends text a little ahead of what you
+  hear, so stopping early sends less.
 - Photos are sent only to Ollama on your own computer (`127.0.0.1:11434`),
   after they have been shrunk and had their metadata removed.
 - With photo location turned on, the photo's GPS coordinates, rounded to about
@@ -109,6 +114,20 @@ them, so don't save keys on a shared account.
   sent.
 - The debug log records what the app did and any errors. It does not record the
   text it reads or your API keys.
+
+## Cloud voices
+
+If a cloud service is busy, limits how fast requests can be made, or can't be
+reached, the app waits and tries again by itself, up to four tries in all. It
+waits as long as the service asks (up to a minute), or otherwise 2, 4 and then
+8 seconds. The status line says when it is waiting, and Escape stops it. The
+app doesn't try again when the problem can't fix itself, such as a rejected API
+key or an account that has run out of credit. A piece of text that is tried
+again is sent again, so the number of characters sent can be a little higher
+than the status line said.
+
+Text is sent in pieces well under each service's limit: up to 2,500 characters
+for ElevenLabs, 4,000 for OpenAI, and 1,900 for Deepgram and Speechify.
 
 ## Wordlists
 

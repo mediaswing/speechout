@@ -10,6 +10,25 @@ the app.
 
 ## [Unreleased]
 
+### Added
+
+- A "Speaking speed" setting for ElevenLabs and Deepgram Aura voices. The app
+  remembers a speed for each service.
+- A "Preview voice" button speaks a short sentence with the chosen voice and
+  speed.
+- Under the speech service, a line says whether speech is made on your
+  computer or your text is sent to the service.
+- When you read aloud or save audio with a cloud voice, the status line says
+  how many characters will be sent to the service.
+
+### Changed
+
+- If a cloud service is busy, limits how fast requests can be made, or can't
+  be reached, the app now waits and tries again by itself instead of stopping.
+  The status line says when it is waiting, and Escape stops it.
+- A cloud account that has run out of credit is now reported as that, instead
+  of as too many requests.
+
 ## [1.2.0] - 2026-10-02
 
 ### Added

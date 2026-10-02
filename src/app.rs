@@ -14,7 +14,7 @@
 
 use crate::audio::AudioFormat;
 use crate::settings::Settings;
-use crate::speech::{Provider, Voice};
+use crate::speech::{self, Provider, Voice};
 use crate::wordlist::{self, Installed, Substitutions};
 use crate::worker::{self, Control, Msg, Reporter, SpeechJob};
 use egui::accesskit::{Live, Role};
@@ -27,6 +27,10 @@ use std::sync::mpsc::{Receiver, channel};
 pub const APP_TITLE: &str = "Speech Output Engine";
 
 const CONTROL_HEIGHT: f32 = 36.0;
+
+/// Spoken by the Preview voice button. Kept short because cloud services
+/// charge by the character.
+const PREVIEW_TEXT: &str = "This is a preview of the selected voice.";
 
 /// The command key as printed on buttons and as spoken in status messages.
 #[cfg(target_os = "macos")]
@@ -66,6 +70,7 @@ enum Loadable<T> {
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum JobKind {
     Speaking,
+    Previewing,
     Saving,
 }
 
@@ -167,6 +172,7 @@ impl SpeechApp {
         let msg = match &self.job {
             Some((JobKind::Speaking, _)) if self.paused => format!("Paused at {percent} percent."),
             Some((JobKind::Speaking, _)) => format!("Reading aloud, {percent} percent."),
+            Some((JobKind::Previewing, _)) => "Previewing the voice.".to_owned(),
             Some((JobKind::Saving, _)) => format!("Saving audio, {percent} percent."),
             None if self.loading_file => "Still opening the file.".to_owned(),
             None => "Nothing is playing.".to_owned(),
@@ -405,6 +411,7 @@ impl SpeechApp {
         self.rep.spawn(move |rep| worker::load_file(rep, path, model, resolve));
     }
 
+    /// A job for the loaded document, with the wordlists applied.
     fn build_job(&mut self) -> Option<SpeechJob> {
         if self.is_busy() {
             return None;
@@ -413,6 +420,13 @@ impl SpeechApp {
             self.announce(format!("There is nothing to read yet. Press {}+O to choose a file.", MOD_KEY.1));
             return None;
         }
+        let subs = Substitutions::new(&self.wordlists, &self.settings.disabled_wordlists);
+        let text = subs.apply(&self.text);
+        self.job_for(text)
+    }
+
+    /// A job that speaks `text` with the chosen service, voice and speed.
+    fn job_for(&mut self, text: String) -> Option<SpeechJob> {
         let provider = self.active_provider();
         let voice = match self.current_voice(provider) {
             Some(v) => v.id.clone(),
@@ -422,22 +436,52 @@ impl SpeechApp {
                 return None;
             }
         };
-        let subs = Substitutions::new(&self.wordlists, &self.settings.disabled_wordlists);
         Some(SpeechJob {
             provider,
             key: self.api_keys.get(&provider).cloned(),
             voice,
-            text: subs.apply(&self.text),
+            speed: self.settings.speed_for(provider),
+            text,
+            preview: false,
         })
+    }
+
+    /// For cloud voices, how much text the job will send, such as
+    /// " 48,250 characters will be sent to ElevenLabs."
+    fn usage_note(job: &SpeechJob, prefix: &str) -> String {
+        if job.provider == Provider::System {
+            return String::new();
+        }
+        let count = speech::billable_chars(job.provider, &job.text);
+        let noun = if count == 1 { "character" } else { "characters" };
+        format!(" {prefix}{} {noun} will be sent to {}.", speech::format_count(count), job.provider.short_name())
     }
 
     fn read_aloud(&mut self) {
         let Some(job) = self.build_job() else { return };
+        // Reading aloud stops sending text when the user presses Stop.
+        let usage = Self::usage_note(&job, "Up to ");
+        self.start_speaking(job, format!("Reading aloud. Press F6 to pause or Escape to stop.{usage}"));
+    }
+
+    /// Speaks a short sentence with the chosen voice and speed, through the
+    /// same job as reading aloud, so Stop, Pause and error handling all work.
+    fn preview_voice(&mut self) {
+        if self.is_busy() {
+            return;
+        }
+        let Some(mut job) = self.job_for(PREVIEW_TEXT.to_owned()) else { return };
+        job.preview = true;
+        self.start_speaking(job, "Previewing the voice.".to_owned());
+    }
+
+    fn start_speaking(&mut self, job: SpeechJob, message: String) {
+        let kind = if job.preview { JobKind::Previewing } else { JobKind::Speaking };
         let control = Arc::new(Control::default());
-        self.job = Some((JobKind::Speaking, control.clone()));
+        self.job = Some((kind, control.clone()));
         self.progress = 0.0;
         self.paused = false;
-        self.announce("Reading aloud. Press F6 to pause or Escape to stop.");
+        self.announce(message);
         self.rep.spawn(move |rep| worker::speak(rep, control, job));
     }
 
@@ -483,7 +527,8 @@ impl SpeechApp {
         let control = Arc::new(Control::default());
         self.job = Some((JobKind::Saving, control.clone()));
         self.progress = 0.0;
-        self.announce(format!("Preparing {}. Press Escape to cancel.", file_name(&path)));
+        let usage = Self::usage_note(&job, "");
+        self.announce(format!("Preparing {}.{usage} Press Escape to cancel.", file_name(&path)));
         self.rep.spawn(move |rep| worker::save(rep, control, job, path, format));
     }
 
@@ -690,10 +735,13 @@ impl SpeechApp {
         let mut index = providers.iter().position(|p| *p == self.active_provider()).unwrap_or(0);
         let labels: Vec<String> = providers.iter().map(|p| p.label().to_owned()).collect();
         if dropdown(ui, "provider", "Speech service", &labels, &mut index, !self.is_busy()) {
-            self.settings.provider = providers[index];
+            let provider = providers[index];
+            self.settings.provider = provider;
             self.settings.save();
-            self.announce(format!("Speech service: {}.", providers[index].label()));
+            self.announce(format!("Speech service: {}. {}", provider.label(), provider.privacy_note()));
         }
+        // Where the speech is made, so it is clear when text leaves the computer.
+        ui.label(self.active_provider().privacy_note());
 
         // Voice.
         let provider = self.active_provider();
@@ -717,6 +765,22 @@ impl SpeechApp {
             && full_button(ui, "Try loading voices again", true).clicked()
         {
             self.voices.remove(&provider);
+        }
+
+        // Speaking speed, only for services that have a speed setting.
+        let speeds = provider.speed_choices();
+        if !speeds.is_empty() {
+            let labels: Vec<String> = speeds.iter().map(|s| speech::speed_label(*s)).collect();
+            let current = self.settings.speed_for(provider);
+            let mut sindex = speeds.iter().position(|s| *s == current).unwrap_or(0);
+            if dropdown(ui, "speed", "Speaking speed", &labels, &mut sindex, !self.is_busy()) {
+                self.settings.set_speed(provider, speeds[sindex]);
+                self.settings.save();
+            }
+        }
+        let can_preview = !self.is_busy() && (provider == Provider::System || !voices.is_empty());
+        if full_button(ui, "Preview voice", can_preview).clicked() {
+            self.preview_voice();
         }
 
         let has_text = !self.text.is_empty();
@@ -913,6 +977,7 @@ impl SpeechApp {
                 let state = if self.paused { "Paused" } else { "Reading aloud" };
                 (Some(self.progress), format!("{state}: {:.0}%", self.progress * 100.0))
             }
+            Some((JobKind::Previewing, _)) => (Some(self.progress), "Previewing the voice".to_owned()),
             Some((JobKind::Saving, _)) => {
                 (Some(self.progress), format!("Saving audio: {:.0}%", self.progress * 100.0))
             }

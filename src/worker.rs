@@ -3,12 +3,13 @@
 //! interface never freezes and the screen reader is kept informed.
 
 use crate::audio::{self, AudioFormat, Playback};
+use crate::speech::retry::{self, Kind};
 use crate::speech::{self, Provider, Voice};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::Sender;
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 pub enum Msg {
     Voices(Provider, Result<Vec<Voice>, String>),
@@ -92,6 +93,20 @@ impl Control {
     pub fn is_paused(&self) -> bool {
         self.paused.load(Ordering::SeqCst)
     }
+
+    /// Waits for `delay`, calling `tick` every tenth of a second. Returns
+    /// false as soon as the job is stopped.
+    fn wait(&self, delay: Duration, mut tick: impl FnMut()) -> bool {
+        let end = Instant::now() + delay;
+        while Instant::now() < end {
+            if self.is_stopped() {
+                return false;
+            }
+            tick();
+            std::thread::sleep(Duration::from_millis(100).min(end.saturating_duration_since(Instant::now())));
+        }
+        !self.is_stopped()
+    }
 }
 
 pub fn load_voices(rep: Reporter, provider: Provider, key: Option<String>) {
@@ -121,18 +136,49 @@ pub struct SpeechJob {
     pub provider: Provider,
     pub key: Option<String>,
     pub voice: String,
+    /// 1.0 for normal speed; ignored by providers without a speed setting.
+    pub speed: f32,
     pub text: String,
+    /// A short voice preview rather than the document.
+    pub preview: bool,
 }
 
 impl SpeechJob {
-    fn render(&self, chunk: &str) -> anyhow::Result<audio::Pcm> {
-        let bytes = speech::synthesize(self.provider, self.key.as_deref(), &self.voice, chunk)?;
-        audio::decode(bytes)
+    /// Renders one piece, trying again after a temporary failure such as a
+    /// rate limit. Returns `None` if the job was stopped while waiting.
+    /// `tick` is called during waits, to keep the progress bar moving.
+    fn render(&self, rep: &Reporter, control: &Control, chunk: &str, mut tick: impl FnMut()) -> anyhow::Result<Option<audio::Pcm>> {
+        let mut failures = 0;
+        loop {
+            let e = match speech::synthesize(self.provider, self.key.as_deref(), &self.voice, chunk, self.speed) {
+                Ok(bytes) => return audio::decode(bytes).map(Some),
+                Err(e) => e,
+            };
+            failures += 1;
+            let kind = retry::kind_of(&e);
+            let Some(delay) = retry::next_delay(kind, failures) else { return Err(e) };
+            log::warn!("try {failures} of {} failed ({kind:?}), retrying in {delay:?}: {e:#}", retry::MAX_ATTEMPTS);
+            // One announcement per retry, so the screen reader is not flooded.
+            rep.send(Msg::Status(retry_message(self.provider, kind, delay)));
+            if !control.wait(delay, &mut tick) {
+                return Ok(None);
+            }
+        }
     }
 }
 
-/// Reads the text aloud, synthesising at most two pieces ahead of playback so
-/// that stopping early does not waste cloud credit.
+fn retry_message(provider: Provider, kind: Kind, delay: Duration) -> String {
+    let name = provider.short_name();
+    let problem = match kind {
+        Kind::RateLimited { .. } => format!("{name} is limiting how fast requests can be made"),
+        Kind::Unavailable { .. } => format!("{name} is busy"),
+        _ => format!("Could not reach {name}"),
+    };
+    let secs = delay.as_secs().max(1);
+    let unit = if secs == 1 { "second" } else { "seconds" };
+    format!("{problem}. Trying again in {secs} {unit}. Press Escape to stop.")
+}
+
 /// Works out how far through the text playback has got: whole pieces
 /// already played, plus the position inside the piece playing now.
 struct SpeakProgress {
@@ -170,6 +216,11 @@ impl SpeakProgress {
 /// Reads the text aloud, synthesising at most two pieces ahead of playback so
 /// that stopping early does not waste cloud credit.
 pub fn speak(rep: Reporter, control: Arc<Control>, job: SpeechJob) {
+    let (stopped, finished) = if job.preview {
+        ("Stopped the preview.", "Finished the preview.")
+    } else {
+        ("Stopped reading.", "Finished reading.")
+    };
     let chunks = speech::chunk_text(job.provider, &job.text);
     let playback = match Playback::open() {
         Ok(p) => p,
@@ -187,12 +238,13 @@ pub fn speak(rep: Reporter, control: Arc<Control>, job: SpeechJob) {
     for (i, chunk) in chunks.iter().enumerate() {
         progress.wait(&rep, &playback, &control, || playback.queued() >= 2);
         if control.is_stopped() {
-            return rep.send(Msg::Done("Stopped reading.".into()));
+            return rep.send(Msg::Done(stopped.into()));
         }
-        match job.render(chunk) {
-            Ok(pcm) => {
+        match job.render(&rep, &control, chunk, || progress.report(&rep, &playback)) {
+            Ok(None) => return rep.send(Msg::Done(stopped.into())),
+            Ok(Some(pcm)) => {
                 if control.is_stopped() {
-                    return rep.send(Msg::Done("Stopped reading.".into()));
+                    return rep.send(Msg::Done(stopped.into()));
                 }
                 progress.durations.push(pcm.duration_secs());
                 playback.append(pcm);
@@ -207,9 +259,9 @@ pub fn speak(rep: Reporter, control: Arc<Control>, job: SpeechJob) {
     }
     progress.wait(&rep, &playback, &control, || playback.queued() > 0);
     if control.is_stopped() {
-        rep.send(Msg::Done("Stopped reading.".into()));
+        rep.send(Msg::Done(stopped.into()));
     } else {
-        rep.send(Msg::Done("Finished reading.".into()));
+        rep.send(Msg::Done(finished.into()));
     }
 }
 
@@ -223,8 +275,9 @@ pub fn save(rep: Reporter, control: Arc<Control>, job: SpeechJob, path: PathBuf,
         if control.is_stopped() {
             return rep.send(Msg::Done("Cancelled saving audio.".into()));
         }
-        match job.render(chunk) {
-            Ok(pcm) => pieces.push(pcm),
+        match job.render(&rep, &control, chunk, || ()) {
+            Ok(None) => return rep.send(Msg::Done("Cancelled saving audio.".into())),
+            Ok(Some(pcm)) => pieces.push(pcm),
             Err(e) => {
                 log::warn!("synthesis failed on piece {}: {e:#}", i + 1);
                 return rep.send(Msg::Failed(err(e)));
@@ -247,5 +300,44 @@ pub fn save(rep: Reporter, control: Arc<Control>, job: SpeechJob, path: PathBuf,
             rep.send(Msg::Done(format!("Saved the audio as {name}.")));
         }
         Err(e) => rep.send(Msg::Failed(err(e))),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn retry_messages_are_plain() {
+        let secs = Duration::from_secs;
+        assert_eq!(
+            retry_message(Provider::ElevenLabs, Kind::Unavailable { retry_after: None }, secs(4)),
+            "ElevenLabs is busy. Trying again in 4 seconds. Press Escape to stop."
+        );
+        assert_eq!(
+            retry_message(Provider::OpenAi, Kind::RateLimited { retry_after: None }, secs(1)),
+            "OpenAI is limiting how fast requests can be made. Trying again in 1 second. Press Escape to stop."
+        );
+        assert_eq!(
+            retry_message(Provider::Deepgram, Kind::Unreachable, Duration::from_millis(300)),
+            "Could not reach Deepgram. Trying again in 1 second. Press Escape to stop."
+        );
+    }
+
+    #[test]
+    fn waiting_ends_early_when_stopped() {
+        let control = Control::default();
+        control.stop();
+        let start = Instant::now();
+        assert!(!control.wait(Duration::from_secs(30), || ()));
+        assert!(start.elapsed() < Duration::from_secs(1));
+    }
+
+    #[test]
+    fn waiting_runs_its_course_otherwise() {
+        let control = Control::default();
+        let mut ticks = 0;
+        assert!(control.wait(Duration::from_millis(250), || ticks += 1));
+        assert!(ticks >= 2);
     }
 }
