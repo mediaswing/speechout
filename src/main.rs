@@ -12,6 +12,7 @@ mod platform;
 mod secrets;
 mod settings;
 mod speech;
+mod spoken;
 mod update;
 mod vision;
 mod wordlist;

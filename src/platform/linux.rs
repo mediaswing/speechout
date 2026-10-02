@@ -132,6 +132,59 @@ pub fn open_url(url: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
+const SNAP_OLLAMA: &str = "/snap/bin/ollama";
+
+fn ollama() -> Option<PathBuf> {
+    find_program(&["ollama"]).or_else(|| Some(PathBuf::from(SNAP_OLLAMA)).filter(|p| p.is_file()))
+}
+
+pub fn ollama_installed() -> bool {
+    ollama().is_some()
+}
+
+/// Ollama is installed as a snap, which works on most distributions. pkexec
+/// asks for the administrator password in a desktop dialog.
+pub fn package_manager() -> Option<&'static str> {
+    (find_program(&["snap"]).is_some() && find_program(&["pkexec"]).is_some()).then_some("Snap")
+}
+
+pub fn install_ollama() -> anyhow::Result<()> {
+    let snap = find_program(&["snap"]).context("Snap is not installed")?;
+    let pkexec = find_program(&["pkexec"]).context("pkexec is not installed")?;
+    let output = Command::new(pkexec)
+        .arg(snap)
+        .args(["install", "ollama"])
+        .stdin(Stdio::null())
+        .output()
+        .context("could not run snap")?;
+    match output.status.code() {
+        Some(0) => Ok(()),
+        // pkexec: the password dialog was dismissed or refused.
+        Some(126 | 127) => bail!("the administrator password was not given"),
+        _ => {
+            log::warn!("snap failed ({}): {}", output.status, String::from_utf8_lossy(&output.stderr).trim());
+            bail!("Snap could not install Ollama")
+        }
+    }
+}
+
+/// The snap runs Ollama as a service by itself. Otherwise, start the server
+/// for this session.
+pub fn start_ollama() -> anyhow::Result<()> {
+    let ollama = ollama().context("Ollama is not installed")?;
+    if ollama.as_path() == Path::new(SNAP_OLLAMA) {
+        return Ok(());
+    }
+    Command::new(ollama)
+        .arg("serve")
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .context("could not start Ollama")?;
+    Ok(())
+}
+
 pub fn secret_get(_name: &str) -> SecretStore<Option<String>> {
     SecretStore::Unsupported
 }
@@ -157,7 +210,7 @@ Exec=speechout
 Icon=audio-speakers
 Terminal=false
 Categories=Utility;Accessibility;AudioVideo;Audio;
-Keywords=speech;tts;screen reader;accessibility;pdf;docx;
+Keywords=speech;tts;screen reader;accessibility;pdf;docx;csv;
 ";
 
 const COPYRIGHT: &str = "Format: https://www.debian.org/doc/packaging-manuals/copyright-format/1.0/
@@ -274,7 +327,7 @@ pub fn package(out_dir: &Path) -> anyhow::Result<PathBuf> {
          Priority: optional\n\
          Homepage: https://github.com/mediaswing/speechout\n\
          Description: Speech Output Engine, an accessible text-to-speech reader\n \
-         Reads PDF, TXT and DOCX files aloud with system or cloud voices, saves\n \
+         Reads PDF, TXT, DOCX and CSV files aloud with system or cloud voices, saves\n \
          speech as WAV or MP3, describes photos with a local AI model and applies\n \
          XML pronunciation wordlists. Fully usable by keyboard and screen reader.\n",
         arch = deb_arch()

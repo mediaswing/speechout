@@ -72,6 +72,8 @@ enum JobKind {
     Speaking,
     Previewing,
     Saving,
+    /// Downloading an AI model into Ollama.
+    Downloading,
 }
 
 pub struct SpeechApp {
@@ -86,6 +88,11 @@ pub struct SpeechApp {
     file: Option<PathBuf>,
     text: String,
     loading_file: bool,
+    /// A photo chosen before a local AI model was found, to describe once
+    /// the check for Ollama finishes.
+    waiting_photo: Option<PathBuf>,
+    /// Ollama is being installed or started for a waiting photo.
+    setting_up_ollama: bool,
     job: Option<(JobKind, Arc<Control>)>,
     paused: bool,
     checking_update: bool,
@@ -133,6 +140,8 @@ impl SpeechApp {
             file: None,
             text: String::new(),
             loading_file: false,
+            waiting_photo: None,
+            setting_up_ollama: false,
             job: None,
             paused: false,
             checking_update: false,
@@ -174,6 +183,8 @@ impl SpeechApp {
             Some((JobKind::Speaking, _)) => format!("Reading aloud, {percent} percent."),
             Some((JobKind::Previewing, _)) => "Previewing the voice.".to_owned(),
             Some((JobKind::Saving, _)) => format!("Saving audio, {percent} percent."),
+            Some((JobKind::Downloading, _)) => format!("Downloading the AI model, {percent} percent."),
+            None if self.setting_up_ollama => "Still setting up Ollama.".to_owned(),
             None if self.loading_file => "Still opening the file.".to_owned(),
             None => "Nothing is playing.".to_owned(),
         };
@@ -259,10 +270,13 @@ impl SpeechApp {
                     );
                 }
                 Msg::Models(result) => {
+                    let waiting = self.waiting_photo.is_some();
                     match &result {
-                        Ok(models) if models.is_empty() => self.announce(
-                            "Ollama is running but has no models. Install a vision model, for example: ollama pull llama3.2-vision",
+                        // A waiting photo leads to an offer to download a model instead.
+                        Ok(models) if models.is_empty() && !waiting => self.announce(
+                            "Ollama is running but has no models. Download one that describes photos on the Settings tab.",
                         ),
+                        Ok(models) if models.is_empty() => {}
                         Ok(models) => {
                             if !models.contains(&self.settings.vision_model)
                                 && let Some(model) = crate::vision::preferred_model(models) {
@@ -279,10 +293,56 @@ impl SpeechApp {
                             }
                         }
                     }
+                    if let Some(path) = self.waiting_photo.take() {
+                        self.loading_file = false;
+                        match &result {
+                            Err(_) => self.offer_ollama(path),
+                            Ok(models) if !crate::vision::has_vision_model(models) => {
+                                self.offer_model_download(Some(path));
+                            }
+                            Ok(_) => self.open_file(path, true),
+                        }
+                    }
                     self.models = Some(match result {
                         Ok(m) => Loadable::Ready(m),
                         Err(_) => Loadable::Failed,
                     });
+                }
+                Msg::ModelDownloaded(model, result) => {
+                    self.job = None;
+                    let photo = self.waiting_photo.take();
+                    match result {
+                        Ok(true) => {
+                            self.settings.vision_model = model.clone();
+                            self.settings.save();
+                            self.models = None;
+                            self.ensure_models();
+                            match photo {
+                                Some(path) => self.open_file(path, true),
+                                None => self.announce(format!("Downloaded {model}. You can now describe photos.")),
+                            }
+                        }
+                        Ok(false) => self.announce(
+                            "Stopped downloading the AI model. What was downloaded is kept, so the next download carries on from there.",
+                        ),
+                        Err(e) => self.announce(format!("Could not download the AI model. {e}")),
+                    }
+                }
+                Msg::OllamaReady(result) => {
+                    self.setting_up_ollama = false;
+                    match result {
+                        Ok(()) => {
+                            // Look for models, then describe the waiting photo.
+                            self.announce("Ollama is running. Looking for a model to describe the photo.");
+                            self.models = None;
+                            self.ensure_models();
+                        }
+                        Err(e) => {
+                            self.loading_file = false;
+                            self.waiting_photo = None;
+                            self.announce(format!("Could not set up Ollama. {e}"));
+                        }
+                    }
                 }
                 Msg::Loaded(path, result) => {
                     self.loading_file = false;
@@ -381,25 +441,134 @@ impl SpeechApp {
         }
         let Some(path) = rfd::FileDialog::new()
             .set_title("Choose a document or photo")
-            .add_filter("Documents and photos", &["pdf", "txt", "docx", "jpg", "jpeg", "heic", "heif"])
-            .add_filter("Documents", &["pdf", "txt", "docx"])
+            .add_filter("Documents and photos", &["pdf", "txt", "docx", "csv", "jpg", "jpeg", "heic", "heif"])
+            .add_filter("Documents", &["pdf", "txt", "docx", "csv"])
             .add_filter("Photos", &["jpg", "jpeg", "heic", "heif"])
             .pick_file()
         else {
             return;
         };
         let Some(kind) = crate::document::FileKind::from_path(&path) else {
-            self.announce("That type of file is not supported. Choose a PDF, TXT, DOCX, JPEG or HEIC file.");
+            self.announce("That type of file is not supported. Choose a PDF, TXT, DOCX, CSV, JPEG or HEIC file.");
             return;
         };
         let is_image = kind == crate::document::FileKind::Image;
-        if is_image && self.settings.vision_model.is_empty() {
-            self.ensure_models();
-            self.announce(
-                "To describe photos, install Ollama with a vision model, then choose the model on the Settings tab.",
-            );
+        if is_image && matches!(self.job, Some((JobKind::Downloading, _))) {
+            self.announce("The AI model is still downloading. Choose the photo again when it has finished.");
             return;
         }
+        // Check Ollama first when no model is chosen, when Ollama was not
+        // running at the last check, or when it has no model for photos, so
+        // the user is offered a fix instead of a failed description.
+        let needs_check = self.settings.vision_model.is_empty()
+            || match &self.models {
+                Some(Loadable::Failed) => true,
+                Some(Loadable::Ready(m)) => !crate::vision::has_vision_model(m),
+                _ => false,
+            };
+        if is_image && needs_check {
+            // Look for Ollama again, in case it has been installed or started
+            // since the last check, and carry on when the answer arrives.
+            if !matches!(self.models, Some(Loadable::Loading)) {
+                self.models = None;
+            }
+            self.ensure_models();
+            self.loading_file = true;
+            self.announce(format!("Looking for the local AI model to describe {}.", file_name(&path)));
+            self.waiting_photo = Some(path);
+            return;
+        }
+        self.open_file(path, is_image);
+    }
+
+    /// Ollama could not be reached when a photo was chosen. Offers to start
+    /// it, install it with the package manager, or open its download page.
+    fn offer_ollama(&mut self, path: PathBuf) {
+        let name = file_name(&path);
+        let installed = crate::platform::ollama_installed();
+        let manager = crate::platform::package_manager();
+        let intro = "Photos are described by Ollama, a free program that runs an AI model on this computer, \
+                     so your photos are not sent anywhere.";
+        let (title, question) = match (installed, manager) {
+            (true, _) => ("Start Ollama", format!("{intro}\n\nOllama is installed but not running. Start it now?")),
+            (false, Some(manager)) => {
+                let password = if cfg!(target_os = "linux") { " You will be asked for your password." } else { "" };
+                (
+                    "Install Ollama",
+                    format!(
+                        "{intro}\n\nOllama is not installed. Install it now with {manager}? It is a large download \
+                         and can take several minutes.{password}"
+                    ),
+                )
+            }
+            (false, None) => (
+                "Install Ollama",
+                format!("{intro}\n\nOllama is not installed. Open the Ollama download page in your web browser?"),
+            ),
+        };
+        let yes = rfd::MessageDialog::new()
+            .set_title(title)
+            .set_description(question)
+            .set_buttons(rfd::MessageButtons::YesNo)
+            .set_level(rfd::MessageLevel::Info)
+            .show()
+            == rfd::MessageDialogResult::Yes;
+        if !yes {
+            self.announce(format!(
+                "Did not describe {name}. To describe photos, install Ollama from ollama.com and start it."
+            ));
+            return;
+        }
+        if !installed && manager.is_none() {
+            match crate::platform::open_url("https://ollama.com/download") {
+                Ok(()) => self.announce("Opened the Ollama download page. Install Ollama, then choose the photo again."),
+                Err(e) => self.announce(format!("{e}. Download Ollama from https://ollama.com/download")),
+            }
+            return;
+        }
+        self.setting_up_ollama = true;
+        self.loading_file = true;
+        self.waiting_photo = Some(path);
+        self.announce(match manager {
+            Some(manager) if !installed => {
+                format!("Installing Ollama with {manager}. This can take several minutes. You will hear when it is done.")
+            }
+            _ => "Starting Ollama.".to_owned(),
+        });
+        self.rep.spawn(move |rep| worker::set_up_ollama(rep, !installed));
+    }
+
+    /// Ollama has no model that understands images. Asks whether to download
+    /// one, then describes `photo` if one is waiting.
+    fn offer_model_download(&mut self, photo: Option<PathBuf>) {
+        let model = crate::vision::SUGGESTED_MODEL;
+        let yes = rfd::MessageDialog::new()
+            .set_title("Download an AI model")
+            .set_description(format!(
+                "Ollama does not have an AI model that can describe photos yet.\n\nDownload {model} now? It is {} \
+                 and can take a while. It is stored by Ollama on this computer. You can press Escape to stop.",
+                crate::vision::SUGGESTED_MODEL_SIZE
+            ))
+            .set_buttons(rfd::MessageButtons::YesNo)
+            .set_level(rfd::MessageLevel::Info)
+            .show()
+            == rfd::MessageDialogResult::Yes;
+        if !yes {
+            self.announce("No model was downloaded. You can download one later on the Settings tab.");
+            return;
+        }
+        let control = Arc::new(Control::default());
+        self.job = Some((JobKind::Downloading, control.clone()));
+        self.progress = 0.0;
+        self.waiting_photo = photo;
+        self.announce(format!(
+            "Downloading {model}, {}. You will hear the progress. Press Escape to stop.",
+            crate::vision::SUGGESTED_MODEL_SIZE
+        ));
+        self.rep.spawn(move |rep| worker::download_model(rep, control, model.to_owned()));
+    }
+
+    fn open_file(&mut self, path: PathBuf, is_image: bool) {
         self.loading_file = true;
         self.announce(if is_image {
             format!("Describing {}. This can take a minute.", file_name(&path))
@@ -411,7 +580,8 @@ impl SpeechApp {
         self.rep.spawn(move |rep| worker::load_file(rep, path, model, resolve));
     }
 
-    /// A job for the loaded document, with the wordlists applied.
+    /// A job for the loaded document, with the wordlists applied and then
+    /// email addresses, dates, numbers and so on put the way they are said.
     fn build_job(&mut self) -> Option<SpeechJob> {
         if self.is_busy() {
             return None;
@@ -421,7 +591,7 @@ impl SpeechApp {
             return None;
         }
         let subs = Substitutions::new(&self.wordlists, &self.settings.disabled_wordlists);
-        let text = subs.apply(&self.text);
+        let text = crate::spoken::apply(&subs.apply(&self.text));
         self.job_for(text)
     }
 
@@ -442,6 +612,7 @@ impl SpeechApp {
             voice,
             speed: self.settings.speed_for(provider),
             text,
+            announce_parts: self.settings.announce_parts,
             preview: false,
         })
     }
@@ -452,7 +623,7 @@ impl SpeechApp {
         if job.provider == Provider::System {
             return String::new();
         }
-        let count = speech::billable_chars(job.provider, &job.text);
+        let count = speech::billable_chars(job.provider, &job.text, job.announce_parts);
         let noun = if count == 1 { "character" } else { "characters" };
         format!(" {prefix}{} {noun} will be sent to {}.", speech::format_count(count), job.provider.short_name())
     }
@@ -523,7 +694,17 @@ impl SpeechApp {
         if !path.extension().is_some_and(|e| e.eq_ignore_ascii_case(format.extension())) {
             path.as_mut_os_string().push(format!(".{}", format.extension()));
         }
-        let Some(job) = self.build_job() else { return };
+        let Some(mut job) = self.build_job() else { return };
+        // A saved photo description ends by saying how it was made, since
+        // the listener cannot tell from the audio alone.
+        let is_image = self
+            .file
+            .as_deref()
+            .and_then(crate::document::FileKind::from_path)
+            .is_some_and(|k| k == crate::document::FileKind::Image);
+        if is_image {
+            job.text = format!("{}\n\n{}", job.text.trim_end(), job.provider.image_description_note());
+        }
         let control = Arc::new(Control::default());
         self.job = Some((JobKind::Saving, control.clone()));
         self.progress = 0.0;
@@ -792,7 +973,11 @@ impl SpeechApp {
         if full_button(ui, pause_label, speaking).clicked() {
             self.toggle_pause();
         }
-        let stop_label = if matches!(self.job, Some((JobKind::Saving, _))) { "Cancel saving (Esc)" } else { "Stop (Esc)" };
+        let stop_label = match self.job {
+            Some((JobKind::Saving, _)) => "Cancel saving (Esc)",
+            Some((JobKind::Downloading, _)) => "Stop downloading (Esc)",
+            _ => "Stop (Esc)",
+        };
         if full_button(ui, stop_label, self.is_busy()).clicked() {
             self.stop();
         }
@@ -830,6 +1015,19 @@ impl SpeechApp {
             self.settings.vision_model = models[mindex].clone();
             self.settings.save();
         }
+        // Offered while Ollama is running without a model that describes photos.
+        if let Some(Loadable::Ready(m)) = &self.models
+            && !crate::vision::has_vision_model(m)
+        {
+            let label = format!(
+                "Download a model that describes photos ({}, {})",
+                crate::vision::SUGGESTED_MODEL,
+                crate::vision::SUGGESTED_MODEL_SIZE
+            );
+            if full_button(ui, &label, !self.is_busy()).clicked() {
+                self.offer_model_download(None);
+            }
+        }
         if full_button(ui, "Refresh the list of models", !matches!(self.models, Some(Loadable::Loading))).clicked() {
             self.models = None;
             self.ensure_models();
@@ -843,6 +1041,17 @@ impl SpeechApp {
         let mut lindex = usize::from(self.settings.resolve_location);
         if dropdown(ui, "location", "Photo location", &location_options, &mut lindex, true) {
             self.settings.resolve_location = lindex == 1;
+            self.settings.save();
+        }
+
+        let part_options = vec![
+            "Run the parts on with no announcement".to_owned(),
+            "Say \"This is part 1 of 3\" at the start of each part".to_owned(),
+        ];
+        let mut pindex = usize::from(self.settings.announce_parts);
+        let label = format!("Long texts (read in parts of up to {} characters)", speech::format_count(speech::PART_CHARS));
+        if dropdown(ui, "parts", &label, &part_options, &mut pindex, true) {
+            self.settings.announce_parts = pindex == 1;
             self.settings.save();
         }
 
@@ -981,6 +1190,10 @@ impl SpeechApp {
             Some((JobKind::Saving, _)) => {
                 (Some(self.progress), format!("Saving audio: {:.0}%", self.progress * 100.0))
             }
+            Some((JobKind::Downloading, _)) => {
+                (Some(self.progress), format!("Downloading the AI model: {:.0}%", self.progress * 100.0))
+            }
+            None if self.setting_up_ollama => (None, "Setting up Ollama…".to_owned()),
             None if self.loading_file => (None, "Opening the file…".to_owned()),
             None => (Some(0.0), "Nothing playing".to_owned()),
         };

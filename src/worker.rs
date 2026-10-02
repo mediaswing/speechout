@@ -15,6 +15,10 @@ pub enum Msg {
     Voices(Provider, Result<Vec<Voice>, String>),
     Models(Result<Vec<String>, String>),
     Loaded(PathBuf, Result<String, String>),
+    /// Downloading a model finished: true if complete, false if stopped.
+    ModelDownloaded(String, Result<bool, String>),
+    /// Installing and/or starting Ollama finished.
+    OllamaReady(Result<(), String>),
     /// Result of an update check; `bool` is true when the user asked for it.
     Update(Result<Option<crate::update::Release>, String>, bool),
     /// Progress worth announcing.
@@ -118,6 +122,52 @@ pub fn load_models(rep: Reporter) {
     rep.send(Msg::Models(crate::vision::list_models().map_err(err)));
 }
 
+/// Installs Ollama with the package manager if `install` is true, then starts
+/// it and waits until it answers.
+pub fn set_up_ollama(rep: Reporter, install: bool) {
+    let result = (|| {
+        if install {
+            crate::platform::install_ollama()?;
+            log::info!("installed Ollama");
+            rep.send(Msg::Status("Ollama is installed. Starting it.".into()));
+        }
+        // The installer may already have started it.
+        if !crate::vision::wait_until_running(Duration::from_secs(2)) {
+            crate::platform::start_ollama()?;
+            if !crate::vision::wait_until_running(Duration::from_secs(60)) {
+                anyhow::bail!("Ollama was started but is not answering. Try restarting the computer");
+            }
+        }
+        Ok(())
+    })();
+    rep.send(Msg::OllamaReady(result.map_err(err)));
+}
+
+/// Downloads a model into Ollama, moving the progress bar and announcing each
+/// quarter. Escape stops it.
+pub fn download_model(rep: Reporter, control: Arc<Control>, model: String) {
+    rep.send(Msg::Progress(0.0));
+    let mut last_sent = -1.0;
+    let mut announced = 0;
+    let result = crate::vision::pull_model(
+        &model,
+        |fraction| {
+            // Half a percent is enough to move the bar; avoid flooding the UI.
+            if (fraction - last_sent).abs() >= 0.005 {
+                last_sent = fraction;
+                rep.send(Msg::Progress(fraction));
+            }
+            let quarter = (fraction * 4.0) as usize;
+            if quarter > announced && quarter < 4 {
+                announced = quarter;
+                rep.send(Msg::Status(format!("Downloading the AI model, {}% done.", quarter * 25)));
+            }
+        },
+        || control.is_stopped(),
+    );
+    rep.send(Msg::ModelDownloaded(model, result.map_err(err)));
+}
+
 pub fn check_for_update(rep: Reporter, requested: bool) {
     let result = crate::update::check().map_err(err);
     rep.send(Msg::Update(result, requested));
@@ -139,11 +189,18 @@ pub struct SpeechJob {
     /// 1.0 for normal speed; ignored by providers without a speed setting.
     pub speed: f32,
     pub text: String,
+    /// Say "This is part 2 of 3" at the start of each part of a long text;
+    /// otherwise parts follow straight on from each other.
+    pub announce_parts: bool,
     /// A short voice preview rather than the document.
     pub preview: bool,
 }
 
 impl SpeechJob {
+    pub fn pieces(&self) -> Vec<String> {
+        speech::pieces(self.provider, &self.text, self.announce_parts)
+    }
+
     /// Renders one piece, trying again after a temporary failure such as a
     /// rate limit. Returns `None` if the job was stopped while waiting.
     /// `tick` is called during waits, to keep the progress bar moving.
@@ -221,7 +278,7 @@ pub fn speak(rep: Reporter, control: Arc<Control>, job: SpeechJob) {
     } else {
         ("Stopped reading.", "Finished reading.")
     };
-    let chunks = speech::chunk_text(job.provider, &job.text);
+    let chunks = job.pieces();
     let playback = match Playback::open() {
         Ok(p) => p,
         Err(e) => return rep.send(Msg::Failed(err(e))),
@@ -266,7 +323,7 @@ pub fn speak(rep: Reporter, control: Arc<Control>, job: SpeechJob) {
 }
 
 pub fn save(rep: Reporter, control: Arc<Control>, job: SpeechJob, path: PathBuf, format: AudioFormat) {
-    let chunks = speech::chunk_text(job.provider, &job.text);
+    let chunks = job.pieces();
     let total = chunks.len();
     let mut pieces = Vec::with_capacity(total);
     let mut announced = 0;

@@ -7,6 +7,8 @@
 //! * `synthesize(text, voice_id)` – render text with a built-in voice and return WAV bytes.
 //! * `heic_to_jpeg(path)` – convert a HEIF/HEIC photo into JPEG bytes.
 //! * `open_url(url)` – open a web page in the default browser.
+//! * `ollama_installed/package_manager/install_ollama/start_ollama` – find,
+//!   install and start Ollama, which describes photos.
 //! * `secret_get/secret_set/secret_delete` – the native secret store, if the
 //!   platform has one that the app uses (the Windows registry). Returning
 //!   `Unsupported` makes the caller fall back to a file in the config folder.
@@ -55,6 +57,28 @@ pub fn open_url(url: &str) -> anyhow::Result<()> {
         anyhow::bail!("refusing to open an unexpected address");
     }
     imp::open_url(url)
+}
+
+/// Whether Ollama, which describes photos, is installed (running or not).
+pub fn ollama_installed() -> bool {
+    imp::ollama_installed()
+}
+
+/// The name of the package manager that can install Ollama here, if any:
+/// winget on Windows, Homebrew on macOS, Snap on Linux.
+pub fn package_manager() -> Option<&'static str> {
+    imp::package_manager()
+}
+
+/// Installs Ollama with the package manager. Blocks until it has finished.
+pub fn install_ollama() -> anyhow::Result<()> {
+    imp::install_ollama()
+}
+
+/// Starts Ollama in the background. Returns once it has been launched, which
+/// may be before it is ready to answer.
+pub fn start_ollama() -> anyhow::Result<()> {
+    imp::start_ollama()
 }
 
 pub fn secret_get(name: &str) -> SecretStore<Option<String>> {

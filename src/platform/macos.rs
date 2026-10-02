@@ -129,6 +129,59 @@ pub fn open_url(url: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
+const OLLAMA_APP: &str = "/Applications/Ollama.app";
+const BREW: [&str; 2] = ["/opt/homebrew/bin/brew", "/usr/local/bin/brew"];
+const OLLAMA_CLI: [&str; 2] = ["/opt/homebrew/bin/ollama", "/usr/local/bin/ollama"];
+
+pub fn ollama_installed() -> bool {
+    Path::new(OLLAMA_APP).exists() || OLLAMA_CLI.iter().any(|p| Path::new(p).is_file())
+}
+
+fn brew() -> Option<&'static str> {
+    BREW.into_iter().find(|p| Path::new(p).is_file())
+}
+
+pub fn package_manager() -> Option<&'static str> {
+    brew().map(|_| "Homebrew")
+}
+
+/// Installs the Ollama app with Homebrew.
+pub fn install_ollama() -> anyhow::Result<()> {
+    let brew = brew().context("Homebrew is not installed")?;
+    let output = Command::new(brew)
+        .args(["install", "--cask", "ollama-app"])
+        .env("HOMEBREW_NO_ENV_HINTS", "1")
+        .stdin(Stdio::null())
+        .output()
+        .context("could not run Homebrew")?;
+    if !output.status.success() {
+        log::warn!("brew failed ({}): {}", output.status, String::from_utf8_lossy(&output.stderr).trim());
+        bail!("Homebrew could not install Ollama");
+    }
+    Ok(())
+}
+
+/// Opens the Ollama app, which runs the server in the background, or starts
+/// the server alone if only the command-line tool is installed.
+pub fn start_ollama() -> anyhow::Result<()> {
+    if Path::new(OLLAMA_APP).exists() {
+        let status = Command::new(OPEN).args(["-g", "-a", OLLAMA_APP]).stdin(Stdio::null()).status()?;
+        if !status.success() {
+            bail!("could not open Ollama");
+        }
+        return Ok(());
+    }
+    let cli = OLLAMA_CLI.into_iter().find(|p| Path::new(p).is_file()).context("Ollama is not installed")?;
+    Command::new(cli)
+        .arg("serve")
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .context("could not start Ollama")?;
+    Ok(())
+}
+
 pub fn secret_get(_name: &str) -> SecretStore<Option<String>> {
     SecretStore::Unsupported
 }

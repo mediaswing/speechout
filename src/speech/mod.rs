@@ -106,6 +106,20 @@ impl Provider {
         }
     }
 
+    /// The closing sentence added to a saved photo description, saying where
+    /// the description and the speech were made.
+    pub fn image_description_note(self) -> String {
+        match self {
+            Provider::System => {
+                "This image description was generated locally and voiced using a local voice.".to_owned()
+            }
+            _ => format!(
+                "This image description was generated locally and voiced using a cloud voice from {}.",
+                self.short_name()
+            ),
+        }
+    }
+
     /// The service's name as used in a sentence.
     pub fn short_name(self) -> &'static str {
         match self {
@@ -128,11 +142,31 @@ pub fn speed_label(speed: f32) -> String {
     }
 }
 
-/// The number of characters that will be sent to the provider for `text`.
-/// Services count Unicode characters, and the whitespace trimmed between
-/// pieces is not sent.
-pub fn billable_chars(provider: Provider, text: &str) -> usize {
-    chunk_text(provider, text).iter().map(|c| c.chars().count()).sum()
+/// The number of characters that will be sent to the provider for `text`,
+/// including any part announcements. Services count Unicode characters, and
+/// the whitespace trimmed between pieces is not sent.
+pub fn billable_chars(provider: Provider, text: &str, announce_parts: bool) -> usize {
+    pieces(provider, text, announce_parts).iter().map(|p| p.chars().count()).sum()
+}
+
+/// Text longer than this is read in parts, at most this many characters each.
+pub const PART_CHARS: usize = 4800;
+
+/// Splits text into parts of at most `PART_CHARS` characters, then each part
+/// into pieces the provider accepts, one request each. With `announce_parts`,
+/// each part of a text with more than one begins "This is part 2 of 3."
+/// Otherwise the parts join like any other pieces.
+pub fn pieces(provider: Provider, text: &str, announce_parts: bool) -> Vec<String> {
+    let parts = split_text(text, PART_CHARS);
+    let total = parts.len();
+    parts
+        .into_iter()
+        .enumerate()
+        .flat_map(|(i, part)| {
+            let part = if announce_parts && total > 1 { format!("This is part {} of {total}. {part}", i + 1) } else { part };
+            chunk_text(provider, &part)
+        })
+        .collect()
 }
 
 /// Writes a count with thousands separators, such as "48,250".
@@ -264,6 +298,27 @@ mod tests {
     }
 
     #[test]
+    fn long_texts_are_read_in_parts() {
+        let text = "A short sentence that is easy to count. ".repeat(250); // 10,000 characters
+        let announced = pieces(Provider::OpenAi, &text, true);
+        let starts: Vec<&String> = announced.iter().filter(|p| p.starts_with("This is part")).collect();
+        assert_eq!(starts.len(), 3);
+        assert!(starts[0].starts_with("This is part 1 of 3. A short"));
+        assert!(starts[1].starts_with("This is part 2 of 3. A short"));
+        assert!(starts[2].starts_with("This is part 3 of 3. A short"));
+        assert!(announced.iter().all(|p| p.chars().count() <= Provider::OpenAi.max_chunk_chars()));
+
+        let joined = pieces(Provider::OpenAi, &text, false);
+        assert!(joined.iter().all(|p| !p.contains("This is part")));
+        assert_eq!(joined.join(" ").split_whitespace().count(), text.split_whitespace().count());
+    }
+
+    #[test]
+    fn short_texts_have_one_part_and_no_announcement() {
+        assert_eq!(pieces(Provider::System, "Hello there.", true), vec!["Hello there.".to_owned()]);
+    }
+
+    #[test]
     fn chunks_lose_no_words() {
         let text = "Ünïcödé wörds, çafé and naïve. ".repeat(300);
         let chunks = chunk_text(Provider::Deepgram, &text);
@@ -273,10 +328,10 @@ mod tests {
 
     #[test]
     fn counts_unicode_characters_not_bytes() {
-        assert_eq!(billable_chars(Provider::OpenAi, "café"), 4);
-        assert_eq!(billable_chars(Provider::OpenAi, "日本語のテキスト"), 8);
-        assert_eq!(billable_chars(Provider::OpenAi, "  padded  "), 6);
-        assert_eq!(billable_chars(Provider::OpenAi, ""), 0);
+        assert_eq!(billable_chars(Provider::OpenAi, "café", false), 4);
+        assert_eq!(billable_chars(Provider::OpenAi, "日本語のテキスト", false), 8);
+        assert_eq!(billable_chars(Provider::OpenAi, "  padded  ", false), 6);
+        assert_eq!(billable_chars(Provider::OpenAi, "", false), 0);
         // Whitespace dropped at the joins between pieces is not counted.
         let text = "One two. Three four. Five six.";
         assert_eq!(split_text(text, 12).iter().map(|c| c.chars().count()).sum::<usize>(), text.len() - 2);
@@ -334,5 +389,17 @@ mod tests {
     fn privacy_notes_name_the_service() {
         assert_eq!(Provider::System.privacy_note(), "Speech is made on this computer.");
         assert_eq!(Provider::Deepgram.privacy_note(), "Your text is sent to Deepgram Aura to make the speech.");
+    }
+
+    #[test]
+    fn image_description_notes_say_where_the_voice_was_made() {
+        assert_eq!(
+            Provider::System.image_description_note(),
+            "This image description was generated locally and voiced using a local voice."
+        );
+        assert_eq!(
+            Provider::ElevenLabs.image_description_note(),
+            "This image description was generated locally and voiced using a cloud voice from ElevenLabs."
+        );
     }
 }

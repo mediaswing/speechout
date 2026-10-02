@@ -128,6 +128,88 @@ pub fn open_url(url: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Stops console programs such as winget flashing up a window.
+const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+
+/// Where the Ollama installer puts it for the current user.
+fn ollama_dir() -> Option<std::path::PathBuf> {
+    Some(dirs::data_local_dir()?.join("Programs").join("Ollama"))
+}
+
+fn ollama_exe() -> Option<std::path::PathBuf> {
+    let installed = ollama_dir().map(|d| d.join("ollama.exe")).filter(|p| p.is_file());
+    installed.or_else(|| {
+        let path = std::env::var_os("PATH")?;
+        std::env::split_paths(&path).map(|d| d.join("ollama.exe")).find(|p| p.is_file())
+    })
+}
+
+pub fn ollama_installed() -> bool {
+    ollama_exe().is_some()
+}
+
+fn winget() -> Option<std::path::PathBuf> {
+    let path = dirs::data_local_dir()?.join(r"Microsoft\WindowsApps\winget.exe");
+    path.exists().then_some(path)
+}
+
+pub fn package_manager() -> Option<&'static str> {
+    winget().map(|_| "winget")
+}
+
+/// Installs Ollama for the current user with winget, without any windows or
+/// prompts. Ollama's installer does not need administrator rights.
+pub fn install_ollama() -> anyhow::Result<()> {
+    use std::os::windows::process::CommandExt;
+    let winget = winget().context("winget is not available on this computer")?;
+    let output = std::process::Command::new(winget)
+        .args([
+            "install",
+            "--id",
+            "Ollama.Ollama",
+            "--exact",
+            "--silent",
+            "--accept-package-agreements",
+            "--accept-source-agreements",
+            "--disable-interactivity",
+        ])
+        .stdin(std::process::Stdio::null())
+        .creation_flags(CREATE_NO_WINDOW)
+        .output()
+        .context("could not run winget")?;
+    if !output.status.success() {
+        log::warn!(
+            "winget failed ({}): {}",
+            output.status,
+            String::from_utf8_lossy(&output.stdout).lines().rfind(|l| !l.trim().is_empty()).unwrap_or("")
+        );
+        bail!("winget could not install Ollama");
+    }
+    Ok(())
+}
+
+/// Starts Ollama's tray app, which runs the server in the background, or
+/// the server alone if the tray app is missing.
+pub fn start_ollama() -> anyhow::Result<()> {
+    use std::os::windows::process::CommandExt;
+    let tray = ollama_dir().map(|d| d.join("ollama app.exe")).filter(|p| p.is_file());
+    let mut command = match tray {
+        Some(tray) => std::process::Command::new(tray),
+        None => {
+            let mut c = std::process::Command::new(ollama_exe().context("Ollama is not installed")?);
+            c.arg("serve").creation_flags(CREATE_NO_WINDOW);
+            c
+        }
+    };
+    command
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .context("could not start Ollama")?;
+    Ok(())
+}
+
 pub fn secret_get(name: &str) -> SecretStore<Option<String>> {
     let hkcu = RegKey::predef(HKEY_CURRENT_USER);
     match hkcu.open_subkey_with_flags(REGISTRY_PATH, KEY_READ) {

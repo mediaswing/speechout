@@ -9,12 +9,15 @@ The program file is called `speechout`.
 
 ## What it does
 
-- **Reads PDF, TXT and DOCX files aloud** with the voices built into your
+- **Reads PDF, TXT, DOCX and CSV files aloud** with the voices built into your
   computer, or with cloud voices from **ElevenLabs**, **OpenAI**, **Deepgram
   Aura** or **Speechify** once you have saved an API key for that service.
 - **Saves the spoken text as an audio file**, in MP3 or WAV format.
 - **Describes photos** (JPEG and HEIC/HEIF) using a local AI model running in
-  [Ollama](https://ollama.com). The photo never leaves your computer.
+  [Ollama](https://ollama.com). The photo never leaves your computer. If
+  Ollama isn't installed when you choose a photo, the app offers to install it
+  with winget (Windows), Homebrew (macOS) or Snap (Linux), or to start it if it
+  is installed but not running.
 - **Says where a photo was taken**, if you turn this on and the photo has GPS
   information. The place name is looked up with OpenStreetMap.
 - **Applies wordlists** that fix pronunciation (for example "Leicester" →
@@ -35,7 +38,7 @@ automatically.
 | Control | What it does |
 | --- | --- |
 | Current file | Shows the file you chose. |
-| Choose a file… | Opens a PDF, TXT, DOCX, JPEG or HEIC file. Photos are described by the local AI model. |
+| Choose a file… | Opens a PDF, TXT, DOCX, CSV, JPEG or HEIC file. Photos are described by the local AI model. CSV files are read as a table, row by row. |
 | Speech service | System voices, plus any cloud service with a saved API key. A line underneath says whether speech is made on your computer or your text is sent to the service. |
 | Voice | The voice to use. The app remembers the voice you chose for each service. |
 | Speaking speed | Only for ElevenLabs (0.7 to 1.2 times normal speed) and Deepgram Aura (0.7 to 1.5 times). Remembered for each service. |
@@ -49,8 +52,13 @@ automatically.
 
 - **Image description model**: choose which Ollama model describes photos.
   It needs a model that understands images, such as `llama3.2-vision`,
-  `gemma3` or `llava`. Install one with `ollama pull llama3.2-vision`.
+  `gemma3` or `llava`. If Ollama has none, a button downloads `gemma3:4b`
+  (about 3.3 GB), and choosing a photo offers the same. Escape stops the
+  download, and the next one carries on where it left off.
 - **Photo location**: whether to read out where a geotagged photo was taken.
+- **Long texts**: text over 4,800 characters is read in parts. Choose whether
+  each part starts with "This is part 1 of 3", or the parts run on with no
+  announcement, with only the usual short pause between sentences.
 - **Updates**: whether to check GitHub for a new version when the app starts,
   and a button to check now. When a new version is out, a dialog offers to
   open its download page.
@@ -217,9 +225,10 @@ src/app.rs            The window, tabs and keyboard handling
 src/worker.rs         Background jobs (speaking, saving, loading)
 src/speech/           System and cloud voices
 src/audio.rs          Decoding, playback, WAV and MP3 export
-src/document.rs       PDF, TXT and DOCX text extraction
+src/document.rs       PDF, TXT, DOCX and CSV text extraction
 src/vision.rs         Photo descriptions, GPS and place names
 src/wordlist.rs       Wordlist parsing and substitution
+src/spoken.rs         Email addresses, dates and numbers put the way they are said
 src/secrets.rs        API key storage
 src/settings.rs       Saved settings
 src/logging.rs        Debug log

@@ -71,15 +71,90 @@ pub fn list_models() -> anyhow::Result<Vec<String>> {
     Ok(models)
 }
 
+/// The model offered for download when Ollama has none that understands
+/// images: small enough for most computers, and good at reading text in photos.
+pub const SUGGESTED_MODEL: &str = "gemma3:4b";
+pub const SUGGESTED_MODEL_SIZE: &str = "about 3.3 GB";
+
+/// Downloads a model into Ollama, calling `progress` with the fraction done.
+/// Returns `Ok(false)` if `stopped` became true first. Ollama keeps what was
+/// downloaded, so a later attempt carries on from there.
+pub fn pull_model(model: &str, mut progress: impl FnMut(f32), stopped: impl Fn() -> bool) -> anyhow::Result<bool> {
+    // A download of several gigabytes can take far longer than other calls.
+    static AGENT: OnceLock<ureq::Agent> = OnceLock::new();
+    let agent = AGENT.get_or_init(|| {
+        ureq::Agent::config_builder()
+            .timeout_connect(Some(Duration::from_secs(5)))
+            .timeout_recv_response(Some(Duration::from_secs(120)))
+            .build()
+            .into()
+    });
+    log::info!("downloading model {model}");
+    let response = agent
+        .post(&format!("{OLLAMA_URL}/api/pull"))
+        .send_json(json!({ "model": model, "stream": true }))
+        .context("Ollama could not start the download")?;
+    // One JSON object per line: a status, and for each file being fetched,
+    // its digest with the total and completed byte counts.
+    let reader = std::io::BufReader::new(response.into_body().into_reader());
+    let mut files: std::collections::HashMap<String, (u64, u64)> = std::collections::HashMap::new();
+    for line in std::io::BufRead::lines(reader) {
+        if stopped() {
+            log::info!("model download stopped");
+            return Ok(false);
+        }
+        let line = line.context("the download from Ollama was interrupted")?;
+        let Ok(event) = serde_json::from_str::<Value>(&line) else { continue };
+        if let Some(error) = event["error"].as_str() {
+            bail!("Ollama could not download the model: {error}");
+        }
+        if event["status"] == "success" {
+            log::info!("downloaded model {model}");
+            return Ok(true);
+        }
+        if let (Some(digest), Some(total)) = (event["digest"].as_str(), event["total"].as_u64()) {
+            let done = event["completed"].as_u64().unwrap_or(0);
+            files.insert(digest.to_owned(), (done, total));
+            let (done, total) = files.values().fold((0, 0), |(d, t), (fd, ft)| (d + fd, t + ft));
+            if total > 0 {
+                progress(done as f32 / total as f32);
+            }
+        }
+    }
+    bail!("the download from Ollama ended before it finished")
+}
+
+/// Whether any of `models` looks like one that understands images.
+pub fn has_vision_model(models: &[String]) -> bool {
+    models.iter().any(|m| is_vision_model(m))
+}
+
+/// Waits up to `limit` for the Ollama server to answer. Returns whether it did.
+pub fn wait_until_running(limit: Duration) -> bool {
+    let end = std::time::Instant::now() + limit;
+    loop {
+        if list_models().is_ok() {
+            return true;
+        }
+        if std::time::Instant::now() >= end {
+            return false;
+        }
+        std::thread::sleep(Duration::from_secs(1));
+    }
+}
+
 /// Picks the model most likely to understand images: the first whose name
 /// matches a well-known vision model family, otherwise the first model.
 pub fn preferred_model(models: &[String]) -> Option<&String> {
+    models.iter().find(|m| is_vision_model(m)).or_else(|| models.first())
+}
+
+/// Whether the name matches a well-known vision model family.
+fn is_vision_model(name: &str) -> bool {
     const VISION_HINTS: &[&str] =
         &["vision", "llava", "gemma3", "vl", "minicpm-v", "moondream", "bakllava", "pixtral", "mistral-small3"];
-    models
-        .iter()
-        .find(|m| VISION_HINTS.iter().any(|h| m.to_lowercase().contains(h)))
-        .or_else(|| models.first())
+    let name = name.to_lowercase();
+    VISION_HINTS.iter().any(|h| name.contains(h))
 }
 
 /// Encodes an image as a JPEG of reasonable quality.

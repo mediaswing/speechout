@@ -25,6 +25,8 @@ pub struct Settings {
     pub examples_installed: bool,
     /// Ask GitHub for a newer release when the app starts.
     pub check_updates: bool,
+    /// Say "This is part 2 of 3" at the start of each part of a long text.
+    pub announce_parts: bool,
 }
 
 impl Default for Settings {
@@ -40,6 +42,7 @@ impl Default for Settings {
             disabled_wordlists: BTreeSet::new(),
             examples_installed: false,
             check_updates: true,
+            announce_parts: false,
         }
     }
 }

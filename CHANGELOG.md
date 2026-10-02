@@ -10,6 +10,45 @@ the app.
 
 ## [Unreleased]
 
+### Added
+
+- CSV files can be opened and are read as a table. The app says how many
+  columns and rows there are, then reads each row with its column names, such
+  as "Row 1. Name: Ann. Town: Leeds." Empty cells are skipped. Files separated
+  by semicolons or tabs work too.
+- If you choose a photo and Ollama isn't installed, the app offers to install
+  it for you with winget on Windows, Homebrew on macOS or Snap on Linux. If
+  there is no package manager, it offers to open the Ollama download page. If
+  Ollama is installed but not running, the app offers to start it. The photo
+  is then described without choosing it again.
+- If Ollama has no AI model that can describe photos, the app offers to
+  download one (gemma3:4b, about 3.3 GB) when you choose a photo, then
+  describes the photo. There is also a button for this on the Settings tab.
+  The download shows on the progress bar, is announced every quarter, and
+  Escape stops it. The next download carries on from where it stopped.
+- Text longer than 4,800 characters is read in parts. A new "Long texts"
+  setting chooses whether each part starts with "This is part 1 of 3", or the
+  parts run on with no announcement, with only the usual short pause between
+  sentences. The parts run on unless you change it.
+- When you save a photo's description as audio, it ends by saying that the
+  description was made on your computer and whether it was voiced by a local
+  voice or a cloud voice.
+
+### Changed
+
+- Email addresses, web addresses, IP addresses, dates and long numbers are now
+  read the way a person would say them. For example, "rachel@example.com" is
+  read as "rachel at example dot com", "2026-10-01" as "1 October 2026", and
+  10536166 as "ten million, five hundred and thirty-six thousand...". Four-digit
+  numbers such as years, and codes and phone numbers, are left as they are. The
+  text you see and copy is not changed.
+
+### Fixed
+
+- Choosing a photo now checks for Ollama again, so once you install or start
+  it, the photo is described without restarting the app or visiting the
+  Settings tab. If Ollama still can't be found, the app says what is missing.
+
 ## [1.3.0] - 2026-10-02
 
 ### Added
@@ -48,5 +87,3 @@ the app.
 - The text preview box has been replaced by the progress bar.
 - Screen readers now repeat a status message even when it is the same as the
   previous one.
-
-## [1.0.0] - 2026-10-02
