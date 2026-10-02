@@ -1,0 +1,161 @@
+# Builds the three release downloads when a version tag (for example v0.1.0)
+# is pushed, and publishes them on a GitHub release whose text comes from the
+# matching section of CHANGELOG.md. Each download is first submitted to
+# VirusTotal, and a table of scan links is added to the release notes.
+#
+# Requires the repository secret VT_API_KEY (a VirusTotal API key).
+#
+# Packaging is done by the application itself, with no shell scripts:
+#   * macOS: `speechout --package-macos dist` (src/platform/macos.rs) builds the
+#     .app bundle, signs it ad hoc and zips it.
+#   * Linux: `speechout --package-deb dist` (src/platform/linux.rs) writes the .deb.
+
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  windows:
+    name: Windows (x86_64)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2.9.2
+      - run: cargo test --locked
+      - run: cargo build --release --locked
+      - uses: actions/upload-artifact@v7.0.1
+        with:
+          name: windows
+          path: target/release/speechout.exe
+          if-no-files-found: error
+
+  linux:
+    name: Ubuntu .deb (amd64)
+    # The oldest supported Ubuntu LTS, so the package installs on 22.04 and later.
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: awalsh128/cache-apt-pkgs-action@v1.6.3
+        with:
+          packages: >-
+            pkg-config libasound2-dev libxkbcommon-dev libwayland-dev
+            libgl1-mesa-dev libx11-dev libxcursor-dev libxrandr-dev libxi-dev
+          version: 1
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2.9.2
+      - run: cargo test --locked
+      - run: cargo build --release --locked
+      - run: target/release/speechout --package-deb dist
+      - uses: actions/upload-artifact@v7.0.1
+        with:
+          name: linux
+          path: dist/*.deb
+          if-no-files-found: error
+
+  macos:
+    name: macOS .app (Apple Silicon)
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin
+      - uses: Swatinem/rust-cache@v2.9.2
+      - run: cargo test --locked
+      - run: cargo build --release --locked --target aarch64-apple-darwin
+      - run: target/aarch64-apple-darwin/release/speechout --package-macos dist
+      - uses: actions/upload-artifact@v7.0.1
+        with:
+          name: macos
+          path: dist/*.zip
+          if-no-files-found: error
+
+  release:
+    name: Publish release
+    needs: [windows, linux, macos]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - name: Read release notes from CHANGELOG.md
+        uses: ffurrer2/extract-release-notes@v3.1.0
+        with:
+          release_notes_file: changelog-notes.md
+      - uses: actions/download-artifact@v8.0.1
+        with:
+          path: artifacts
+          merge-multiple: true
+      # Scan before publishing so the results can go into the release notes.
+      # A VirusTotal outage must not block a release, so failures are allowed
+      # and the scan table is simply left out.
+      - name: Scan downloads with VirusTotal
+        id: virustotal
+        continue-on-error: true
+        uses: crazy-max/ghaction-virustotal@v5.0.0
+        with:
+          vt_api_key: ${{ secrets.VT_API_KEY }}
+          files: |
+            artifacts/speechout.exe
+            artifacts/*.deb
+            artifacts/*.zip
+          # The free VirusTotal API allows 4 requests a minute.
+          request_rate: 4
+      - name: Write release notes
+        uses: actions/github-script@v9.0.0
+        env:
+          SCAN_OUTCOME: ${{ steps.virustotal.outcome }}
+        with:
+          script: |
+            const fs = require('fs');
+            const path = require('path');
+            const crypto = require('crypto');
+
+            // The changelog section may be empty (or absent).
+            let notes = fs.existsSync('changelog-notes.md')
+              ? fs.readFileSync('changelog-notes.md', 'utf8').trim()
+              : '';
+
+            if (process.env.SCAN_OUTCOME === 'success') {
+              const platform = (name) =>
+                name.endsWith('.exe') ? 'Windows' :
+                name.endsWith('.deb') ? 'Ubuntu' :
+                name.endsWith('.zip') ? 'Apple Silicon' : '';
+              const rows = fs.readdirSync('artifacts').sort().map((name) => {
+                const sha = crypto.createHash('sha256')
+                  .update(fs.readFileSync(path.join('artifacts', name)))
+                  .digest('hex');
+                // The permanent report for this exact file.
+                const url = `https://www.virustotal.com/gui/file/${sha}`;
+                return `| \`${name}\` (${platform(name)}) | \`${sha}\` | [View scan](${url}) |`;
+              });
+              const table = [
+                '## VirusTotal scans',
+                '',
+                '| Download | SHA-256 | Report |',
+                '| --- | --- | --- |',
+                ...rows,
+              ].join('\n');
+              notes = notes ? `${notes}\n\n${table}` : table;
+            } else {
+              core.warning('VirusTotal scan failed; publishing without scan results.');
+            }
+
+            fs.writeFileSync('release-notes.md', notes + '\n');
+      - uses: softprops/action-gh-release@v3.0.3
+        with:
+          body_path: release-notes.md
+          files: |
+            artifacts/speechout.exe
+            artifacts/*.deb
+            artifacts/*.zip
+          fail_on_unmatched_files: true
