@@ -5,10 +5,12 @@
 #
 # Requires the repository secret VT_API_KEY (a VirusTotal API key).
 #
-# Packaging is done by the application itself, with no shell scripts:
+# Packaging:
 #   * macOS: `speechout --package-macos dist` (src/platform/macos.rs) builds the
 #     .app bundle, signs it ad hoc and zips it.
 #   * Linux: `speechout --package-deb dist` (src/platform/linux.rs) writes the .deb.
+#   * Windows: a PowerShell step in the windows job zips the exe with the
+#     Visual C++ runtime DLLs it imports.
 
 name: Release
 
@@ -26,16 +28,54 @@ jobs:
   windows:
     name: Windows (x86_64)
     runs-on: windows-latest
+    env:
+      # libheif and libde265 are built into speechout.exe (the bundled-heif
+      # feature), so HEIC photos need no Microsoft Store add-ons.
+      VCPKGRS_TRIPLET: x64-windows-static-md
+      VCPKG_DEFAULT_BINARY_CACHE: ${{ github.workspace }}\vcpkg-cache
     steps:
       - uses: actions/checkout@v7.0.1
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2.9.2
-      - run: cargo test --locked
-      - run: cargo build --release --locked
+      - uses: actions/cache@v6.1.0
+        with:
+          path: vcpkg-cache
+          key: vcpkg-libheif-${{ hashFiles('Cargo.lock') }}
+          restore-keys: vcpkg-libheif-
+      # The runner image includes vcpkg.
+      - name: Install libheif with vcpkg
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force $env:VCPKG_DEFAULT_BINARY_CACHE | Out-Null
+          & "$env:VCPKG_INSTALLATION_ROOT\vcpkg.exe" install "libheif[core]:x64-windows-static-md" --disable-metrics
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          "VCPKG_ROOT=$env:VCPKG_INSTALLATION_ROOT" >> $env:GITHUB_ENV
+      - run: cargo test --locked --features bundled-heif
+      - run: cargo build --release --locked --features bundled-heif
+      # Zip the exe with the Visual C++ runtime DLLs it uses, so it runs on
+      # PCs without the Visual C++ Redistributable. The list comes from the
+      # exe's own imports; DLLs that are part of Windows are not copied.
+      - name: Zip the exe with its runtime DLLs
+        shell: pwsh
+        run: |
+          $vs = & "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe" -latest -products * -property installationPath
+          $dumpbin = Get-ChildItem "$vs\VC\Tools\MSVC\*\bin\Hostx64\x64\dumpbin.exe" | Select-Object -Last 1
+          $crt = Get-ChildItem "$vs\VC\Redist\MSVC\*\x64\Microsoft.VC*.CRT" -Directory | Select-Object -Last 1
+          if (-not $dumpbin -or -not $crt) { throw "Visual C++ tools or runtime not found under $vs" }
+          $imports = & $dumpbin.FullName /nologo /dependents target\release\speechout.exe |
+            ForEach-Object { $_.Trim() } | Where-Object { $_ -like '*.dll' }
+          $dlls = $imports | ForEach-Object { Join-Path $crt.FullName $_ } | Where-Object { Test-Path $_ }
+          if (-not $dlls) { throw "No Visual C++ runtime DLLs found in the exe's imports: $($imports -join ', ')" }
+          $version = $env:GITHUB_REF_NAME.TrimStart('v')
+          $folder = "speechout-$version-windows-x86_64"
+          New-Item -ItemType Directory -Force "stage\$folder", dist | Out-Null
+          Copy-Item -Path (@('target\release\speechout.exe') + $dlls) -Destination "stage\$folder"
+          Write-Host "Packaged:" (Get-ChildItem "stage\$folder").Name
+          Compress-Archive -Path "stage\$folder" -DestinationPath "dist\$folder.zip"
       - uses: actions/upload-artifact@v7.0.1
         with:
           name: windows
-          path: target/release/speechout.exe
+          path: dist/*.zip
           if-no-files-found: error
 
   linux:
@@ -105,7 +145,6 @@ jobs:
         with:
           vt_api_key: ${{ secrets.VT_API_KEY }}
           files: |
-            artifacts/speechout.exe
             artifacts/*.deb
             artifacts/*.zip
           # The free VirusTotal API allows 4 requests a minute.
@@ -127,9 +166,9 @@ jobs:
 
             if (process.env.SCAN_OUTCOME === 'success') {
               const platform = (name) =>
-                name.endsWith('.exe') ? 'Windows' :
+                name.includes('-windows-') ? 'Windows' :
                 name.endsWith('.deb') ? 'Ubuntu' :
-                name.endsWith('.zip') ? 'Apple Silicon' : '';
+                name.includes('-macos-') ? 'Apple Silicon' : '';
               const rows = fs.readdirSync('artifacts').sort().map((name) => {
                 const sha = crypto.createHash('sha256')
                   .update(fs.readFileSync(path.join('artifacts', name)))
@@ -155,7 +194,6 @@ jobs:
         with:
           body_path: release-notes.md
           files: |
-            artifacts/speechout.exe
             artifacts/*.deb
             artifacts/*.zip
           fail_on_unmatched_files: true

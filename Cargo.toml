@@ -34,7 +34,14 @@ tempfile = "3"
 log = "0.4"
 anyhow = "1"
 
+[features]
+# Windows only: decode HEIC photos with libheif and libde265 built into the
+# app, so the Microsoft Store add-ons are not needed. Needs libheif installed
+# with vcpkg; see CONTRIBUTING.md. Release builds turn this on.
+bundled-heif = ["dep:libheif-rs"]
+
 [target.'cfg(windows)'.dependencies]
+libheif-rs = { version = "3", optional = true }
 winreg = "0.56"
 windows = { version = "0.62", features = [
     "Foundation",

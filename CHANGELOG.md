@@ -10,6 +10,27 @@ the app.
 
 ## [Unreleased]
 
+### Changed
+
+- On Windows, HEIC photos (the format iPhones use) now open without
+  installing anything from the Microsoft Store. The app has its own HEIC
+  decoder built in, and only uses Windows' codecs if that can't open a photo.
+- The Windows download is now a zip file. Unzip it and keep the files
+  together: `speechout.exe` sits next to the Microsoft Visual C++ runtime files
+  it needs, so it runs even if they aren't installed on the PC.
+- Errors, such as a file that can't be opened or a cloud voice that fails,
+  now appear in a dialog as well as in the status line, so they can't be
+  missed.
+- The text in the progress bar is now centred.
+
+### Fixed
+
+- On smaller or zoomed screens, the window could open taller than the space
+  above the taskbar, hiding the progress bar and status line. It now opens at
+  a size that fits.
+- On Windows, if a HEIC photo can't be opened because HEVC Video Extensions is
+  missing, the app now says so instead of showing a Windows error code.
+
 ## [1.5.0] - 2026-10-02
 
 ### Added

@@ -93,6 +93,8 @@ pub struct SpeechApp {
     waiting_photo: Option<PathBuf>,
     /// Ollama is being installed or started for a waiting photo.
     setting_up_ollama: bool,
+    /// The window has been checked against the screen size.
+    fitted_to_screen: bool,
     job: Option<(JobKind, Arc<Control>)>,
     paused: bool,
     checking_update: bool,
@@ -142,6 +144,7 @@ impl SpeechApp {
             loading_file: false,
             waiting_photo: None,
             setting_up_ollama: false,
+            fitted_to_screen: false,
             job: None,
             paused: false,
             checking_update: false,
@@ -173,6 +176,20 @@ impl SpeechApp {
             text.push('\u{a0}');
         }
         self.status = text;
+    }
+
+    /// Reports something that went wrong: in the status line, like any other
+    /// message, and in an error dialog so it cannot be missed. Screen readers
+    /// read the dialog out when it opens.
+    fn show_error(&mut self, text: impl Into<String>) {
+        let text = text.into();
+        self.announce(text.clone());
+        rfd::MessageDialog::new()
+            .set_title(APP_TITLE)
+            .set_description(text)
+            .set_buttons(rfd::MessageButtons::Ok)
+            .set_level(rfd::MessageLevel::Error)
+            .show();
     }
 
     /// Speaks how far through reading or saving we are (F7).
@@ -250,6 +267,38 @@ impl SpeechApp {
         }
     }
 
+    /// The window opens at its usual size, which can be taller than the room
+    /// above the taskbar on a small or zoomed screen, hiding the progress bar
+    /// and status line. Once the screen size is known, shrink the window to
+    /// fit and move it up if its bottom would be covered.
+    fn fit_to_screen(&mut self, ctx: &egui::Context) {
+        /// Room left for a taskbar, dock or panel.
+        const RESERVED: f32 = 56.0;
+        if self.fitted_to_screen {
+            return;
+        }
+        let (monitor, inner, outer) = ctx.input(|i| {
+            let v = i.viewport();
+            (v.monitor_size, v.inner_rect, v.outer_rect)
+        });
+        // Some systems (Wayland) never report the window's position.
+        let (Some(monitor), Some(inner), Some(outer)) = (monitor, inner, outer) else { return };
+        self.fitted_to_screen = true;
+        let border = outer.size() - inner.size();
+        let largest = (monitor - border - egui::vec2(0.0, RESERVED)).max(egui::vec2(360.0, 480.0));
+        let size = inner.size().min(largest);
+        if size != inner.size() {
+            log::info!("shrinking the window from {:?} to {size:?} to fit the screen", inner.size());
+            ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(size));
+        }
+        // Only move a window on the main screen, whose top-left corner is 0, 0.
+        let bottom = outer.top() + border.y + size.y;
+        if outer.top() >= 0.0 && outer.top() < monitor.y && bottom > monitor.y - RESERVED {
+            let top = (monitor.y - RESERVED - border.y - size.y).max(0.0);
+            ctx.send_viewport_cmd(egui::ViewportCommand::OuterPosition(egui::pos2(outer.left(), top)));
+        }
+    }
+
     fn is_busy(&self) -> bool {
         self.job.is_some()
     }
@@ -259,7 +308,7 @@ impl SpeechApp {
             match msg {
                 Msg::Voices(provider, result) => {
                     if let Err(e) = &result {
-                        self.announce(format!("Could not load voices for {}: {e}", provider.label()));
+                        self.show_error(format!("Could not load voices for {}: {e}", provider.label()));
                     }
                     self.voices.insert(
                         provider,
@@ -287,9 +336,11 @@ impl SpeechApp {
                                 self.announce(format!("Found {} local AI model(s).", models.len()));
                             }
                         }
+                        // A waiting photo gets the offer to install or start
+                        // Ollama instead, so it is not reported twice.
                         Err(e) => {
-                            if self.tab == Tab::Settings {
-                                self.announce(e.clone());
+                            if self.tab == Tab::Settings && !waiting {
+                                self.show_error(e.clone());
                             }
                         }
                     }
@@ -325,7 +376,7 @@ impl SpeechApp {
                         Ok(false) => self.announce(
                             "Stopped downloading the AI model. What was downloaded is kept, so the next download carries on from there.",
                         ),
-                        Err(e) => self.announce(format!("Could not download the AI model. {e}")),
+                        Err(e) => self.show_error(format!("Could not download the AI model. {e}")),
                     }
                 }
                 Msg::OllamaReady(result) => {
@@ -340,7 +391,7 @@ impl SpeechApp {
                         Err(e) => {
                             self.loading_file = false;
                             self.waiting_photo = None;
-                            self.announce(format!("Could not set up Ollama. {e}"));
+                            self.show_error(format!("Could not set up Ollama. {e}"));
                         }
                     }
                 }
@@ -357,7 +408,7 @@ impl SpeechApp {
                                 MOD_KEY.1
                             ));
                         }
-                        Err(e) => self.announce(format!("Could not load {name}. {e}")),
+                        Err(e) => self.show_error(format!("Could not load {name}. {e}")),
                     }
                 }
                 Msg::Update(result, requested) => self.update_checked(result, requested),
@@ -371,7 +422,7 @@ impl SpeechApp {
                 Msg::Failed(e) => {
                     self.job = None;
                     self.paused = false;
-                    self.announce(e);
+                    self.show_error(e);
                 }
             }
         }
@@ -395,7 +446,7 @@ impl SpeechApp {
             Err(e) => {
                 // An automatic check fails quietly (the error is in the log).
                 if requested {
-                    self.announce(e);
+                    self.show_error(e);
                 }
                 return;
             }
@@ -416,7 +467,7 @@ impl SpeechApp {
         if open {
             match crate::platform::open_url(&release.url) {
                 Ok(()) => self.announce(format!("Opened the download page for version {}.", release.version)),
-                Err(e) => self.announce(format!("{e}. The download page is {}", release.url)),
+                Err(e) => self.show_error(format!("{e}. The download page is {}", release.url)),
             }
         } else {
             self.announce(format!(
@@ -449,7 +500,7 @@ impl SpeechApp {
             return;
         };
         let Some(kind) = crate::document::FileKind::from_path(&path) else {
-            self.announce("That type of file is not supported. Choose a PDF, TXT, DOCX, CSV, JPEG or HEIC file.");
+            self.show_error("That type of file is not supported. Choose a PDF, TXT, DOCX, CSV, JPEG or HEIC file.");
             return;
         };
         let is_image = kind == crate::document::FileKind::Image;
@@ -522,7 +573,7 @@ impl SpeechApp {
         if !installed && manager.is_none() {
             match crate::platform::open_url("https://ollama.com/download") {
                 Ok(()) => self.announce("Opened the Ollama download page. Install Ollama, then choose the photo again."),
-                Err(e) => self.announce(format!("{e}. Download Ollama from https://ollama.com/download")),
+                Err(e) => self.show_error(format!("{e}. Download Ollama from https://ollama.com/download")),
             }
             return;
         }
@@ -732,7 +783,7 @@ impl SpeechApp {
                     saved.push(provider.label());
                 }
                 Err(e) => {
-                    self.announce(format!("Could not save the {} key: {e}", provider.label()));
+                    self.show_error(format!("Could not save the {} key: {e}", provider.label()));
                     return;
                 }
             }
@@ -779,7 +830,7 @@ impl SpeechApp {
                 self.settings.save();
                 self.announce(format!("Debug logs are now saved to {}.", file.display()));
             }
-            Err(e) => self.announce(format!("Could not use that folder for logs: {e}")),
+            Err(e) => self.show_error(format!("Could not use that folder for logs: {e}")),
         }
     }
 
@@ -796,7 +847,7 @@ impl SpeechApp {
                 self.reload_wordlists();
                 self.announce(format!("Imported and enabled the wordlist \"{name}\"."));
             }
-            Err(e) => self.announce(format!("Could not import {}: {e:#}", file_name(&path))),
+            Err(e) => self.show_error(format!("Could not import {}: {e:#}", file_name(&path))),
         }
     }
 
@@ -820,7 +871,7 @@ impl SpeechApp {
                 self.reload_wordlists();
                 self.announce(format!("Removed the wordlist \"{title}\"."));
             }
-            Err(e) => self.announce(format!("{e:#}")),
+            Err(e) => self.show_error(format!("{e:#}")),
         }
     }
 
@@ -1085,7 +1136,7 @@ impl SpeechApp {
             if typed.is_absolute() {
                 self.apply_log_dir(typed);
             } else {
-                self.announce("Type a full folder path, for example one starting with a drive letter or a slash.");
+                self.show_error("Type a full folder path, for example one starting with a drive letter or a slash.");
             }
         }
 
@@ -1200,10 +1251,20 @@ impl SpeechApp {
         let bar = egui::ProgressBar::new(fraction.unwrap_or(0.0))
             .desired_width(ui.available_width())
             .desired_height(24.0)
-            .text(text.clone())
             // An unknown amount of work (opening a file) shows as an animation.
             .animate(fraction.is_none());
         let resp = ui.add(bar);
+        // egui draws a bar's own text at the left edge, so the text is drawn
+        // here instead, centred, in the font and colour the bar would use.
+        let galley = egui::WidgetText::from(text.as_str()).into_galley(
+            ui,
+            Some(egui::TextWrapMode::Truncate),
+            resp.rect.width(),
+            egui::TextStyle::Button,
+        );
+        let colour = ui.visuals().override_text_color.unwrap_or(ui.visuals().selection.stroke.color);
+        let pos = resp.rect.center() - galley.size() / 2.0;
+        ui.painter().with_clip_rect(resp.rect).galley(pos, galley, colour);
         ui.ctx().accesskit_node_builder(resp.id, |node| {
             node.set_label("Progress");
             node.set_value(text);
@@ -1226,6 +1287,7 @@ impl SpeechApp {
 impl eframe::App for SpeechApp {
     fn ui(&mut self, ui: &mut Ui, _frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
+        self.fit_to_screen(&ctx);
         self.handle_messages();
         self.handle_shortcuts(&ctx);
 

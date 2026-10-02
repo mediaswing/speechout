@@ -97,7 +97,7 @@ has focus. The app follows your system's light or dark setting.
 
 | | System voices | HEIC photos | API keys stored in |
 | --- | --- | --- | --- |
-| Windows 10/11 | Windows speech voices (the same ones Narrator uses) | Install **HEIF Image Extensions** from the Microsoft Store | `HKEY_CURRENT_USER\Software\SpeechOut` in the registry. If the registry can't be used, a text file in `%APPDATA%\SpeechOut` |
+| Windows 10/11 | Windows speech voices (the same ones Narrator uses) | Built in. If the built-in decoder can't open a photo, Windows' own codecs are tried, which need **HEIF Image Extensions** and **HEVC Video Extensions** from the Microsoft Store | `HKEY_CURRENT_USER\Software\SpeechOut` in the registry. If the registry can't be used, a text file in `%APPDATA%\SpeechOut` |
 | macOS 11+ (Apple Silicon) | The voices in System Settings › Accessibility › Spoken Content | Built in | `~/Library/Application Support/SpeechOut/api-keys.txt` (readable only by you) |
 | Ubuntu 22.04+ | eSpeak NG (installed with the .deb) | `libheif-examples` package | `~/.config/speechout/api-keys.txt` (readable only by you) |
 
@@ -189,6 +189,20 @@ sudo apt install pkg-config libasound2-dev libxkbcommon-dev libwayland-dev \
 Run the tests with `cargo test`. Tests that use your computer's real speech
 synthesiser are skipped by default; run them with `cargo test -- --ignored`.
 
+### HEIC photos on Windows
+
+Release builds include libheif and libde265, so HEIC photos open without any
+Microsoft Store add-ons. A plain `cargo build` leaves them out and uses
+Windows' own codecs instead. To build them in, install libheif with
+[vcpkg](https://vcpkg.io) and turn on the `bundled-heif` feature:
+
+```
+vcpkg install "libheif[core]:x64-windows-static-md"
+set VCPKG_ROOT=<your vcpkg folder>
+set VCPKGRS_TRIPLET=x64-windows-static-md
+cargo build --release --features bundled-heif
+```
+
 ### Packaging
 
 The app packages itself, so no packaging scripts are needed:
@@ -210,8 +224,9 @@ Privacy & Security and choose **Open Anyway**.
    bump `version` in `Cargo.toml`.
 2. Push a tag such as `v0.2.0`.
 
-The [release workflow](.github/workflows/release.yml) builds a Windows `.exe`,
-an Ubuntu `.deb` and an Apple Silicon `.app` (zipped). It then publishes them
+The [release workflow](.github/workflows/release.yml) builds a Windows `.zip`
+(the `.exe` with the Visual C++ runtime DLLs it needs), an Ubuntu `.deb` and an
+Apple Silicon `.app` (zipped). It then publishes them
 on a GitHub release, using the newest version section of the changelog as the
 release notes. Before publishing, each download is submitted to VirusTotal,
 and a table of scan links is added to the release notes. This needs a repository secret called
@@ -245,3 +260,9 @@ The Speech Output Engine is free software, released under the
 The interface uses Google Sans: Medium for body text and Bold for the tabs.
 The fonts are built into the app and are licensed under the
 [SIL Open Font License 1.1](assets/fonts/OFL.txt).
+
+The Windows download includes [libheif](https://github.com/strukturag/libheif)
+and [libde265](https://github.com/strukturag/libde265), which read HEIC photos.
+Both are licensed under the
+[GNU Lesser General Public License, version 3](https://www.gnu.org/licenses/lgpl-3.0.html).
+HEVC, the format inside HEIC photos, is covered by patents in some countries.

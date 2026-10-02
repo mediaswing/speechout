@@ -112,7 +112,8 @@ are easier to keep secure.
 
    Tests that use the real speech synthesiser are skipped by default; run them
    with `cargo test -- --ignored`. See the README for the Ubuntu build
-   dependencies.
+   dependencies, and for building HEIC support into the Windows app with the
+   `bundled-heif` feature.
 3. Add tests for new behaviour where you can, especially in code that doesn't
    depend on the window, such as wordlists and document reading.
 4. If the change affects people who use the app, add a line to the

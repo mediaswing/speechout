@@ -1,6 +1,6 @@
 //! Windows: system voices use the WinRT speech synthesiser (the same voices
 //! Narrator offers), HEIC conversion uses the Windows Imaging Component with the
-//! HEIF Image Extensions from the Microsoft Store, and API keys are kept under
+//! HEIF and HEVC Video Extensions from the Microsoft Store, and API keys are kept under
 //! HKEY_CURRENT_USER in the registry.
 
 use super::SecretStore;
@@ -76,7 +76,64 @@ pub fn synthesize(text: &str, voice_id: &str) -> anyhow::Result<Vec<u8>> {
     run().context("the Windows speech synthesiser failed")
 }
 
+/// MF_E_TOPO_CODEC_NOT_FOUND: "No suitable transform was found to encode or
+/// decode the content."
+const CODEC_NOT_FOUND: u32 = 0xC00D_5212;
+
+/// The picture inside a HEIC file is compressed with HEVC, which Windows can
+/// only decode with HEVC Video Extensions, a separate add-on from the HEIF
+/// one. Without it, decoding fails with `CODEC_NOT_FOUND`.
+fn decode_error(e: windows::core::Error) -> anyhow::Error {
+    if e.code().0 as u32 == CODEC_NOT_FOUND {
+        log::warn!("HEIC decode failed: {e}");
+        anyhow::anyhow!(
+            "Windows needs \"HEVC Video Extensions\" from the Microsoft Store to open HEIC photos. \
+             Install it and try again"
+        )
+    } else {
+        e.into()
+    }
+}
+
+/// Converts a HEIC photo with the libheif built into the app, if this build
+/// has it, so no Store add-ons are needed. Falls back to Windows' own codecs.
 pub fn heic_to_jpeg(path: &Path) -> anyhow::Result<Vec<u8>> {
+    #[cfg(feature = "bundled-heif")]
+    match heic_with_libheif(path) {
+        Ok(jpeg) => return Ok(jpeg),
+        Err(e) => log::warn!("libheif could not convert the photo, trying Windows instead: {e:#}"),
+    }
+    heic_with_wic(path)
+}
+
+#[cfg(feature = "bundled-heif")]
+fn heic_with_libheif(path: &Path) -> anyhow::Result<Vec<u8>> {
+    use libheif_rs::{ColorSpace, HeifContext, LibHeif, RgbChroma};
+    let bytes = std::fs::read(path).context("the photo could not be read")?;
+    let context = HeifContext::read_from_bytes(&bytes)?;
+    let handle = context.primary_image_handle()?;
+    if u64::from(handle.width()) * u64::from(handle.height()) > MAX_PIXELS {
+        bail!("this image is too large to describe");
+    }
+    // Decoding applies the rotation and cropping stored in the file.
+    let image = LibHeif::new().decode(&handle, ColorSpace::Rgb(RgbChroma::Rgb), None)?;
+    let plane = image.planes().interleaved.context("libheif returned no pixels")?;
+    if plane.storage_bits_per_pixel != 24 {
+        bail!("libheif returned {} bits per pixel, not 24", plane.storage_bits_per_pixel);
+    }
+    // Rows can be padded, so copy each one without its padding.
+    let row = plane.width as usize * 3;
+    let mut rgb = Vec::with_capacity(row * plane.height as usize);
+    for line in plane.data.chunks(plane.stride).take(plane.height as usize) {
+        rgb.extend_from_slice(line.get(..row).context("libheif returned a short row")?);
+    }
+    let image = image::RgbImage::from_raw(plane.width, plane.height, rgb).context("invalid image data")?;
+    crate::vision::encode_jpeg(&image::DynamicImage::ImageRgb8(image))
+}
+
+/// Converts a HEIC photo with the Windows Imaging Component, which needs the
+/// HEIF Image Extensions and HEVC Video Extensions from the Microsoft Store.
+fn heic_with_wic(path: &Path) -> anyhow::Result<Vec<u8>> {
     // SAFETY: plain COM calls on interfaces owned by this function. COM may
     // already be initialised on this thread, which CoInitializeEx reports as a
     // harmless error code that we ignore.
@@ -96,8 +153,8 @@ pub fn heic_to_jpeg(path: &Path) -> anyhow::Result<Vec<u8>> {
                 "Windows could not open this HEIC image. Install \"HEIF Image Extensions\" \
                  from the Microsoft Store and try again.",
             )?;
-        let frame = decoder.GetFrame(0)?;
-        let source = WICConvertBitmapSource(&GUID_WICPixelFormat24bppBGR, &frame)?;
+        let frame = decoder.GetFrame(0).map_err(decode_error)?;
+        let source = WICConvertBitmapSource(&GUID_WICPixelFormat24bppBGR, &frame).map_err(decode_error)?;
         let (mut width, mut height) = (0u32, 0u32);
         source.GetSize(&mut width, &mut height)?;
         if u64::from(width) * u64::from(height) > MAX_PIXELS || width == 0 || height == 0 {
@@ -105,7 +162,7 @@ pub fn heic_to_jpeg(path: &Path) -> anyhow::Result<Vec<u8>> {
         }
         let stride = width * 3;
         let mut bgr = vec![0u8; stride as usize * height as usize];
-        source.CopyPixels(std::ptr::null(), stride, &mut bgr)?;
+        source.CopyPixels(std::ptr::null(), stride, &mut bgr).map_err(decode_error)?;
         (width, height, bgr)
     };
     let mut rgb = bgr;
