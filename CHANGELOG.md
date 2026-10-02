@@ -10,6 +10,8 @@ the app.
 
 ## [Unreleased]
 
+## [1.3.0] - 2026-10-02
+
 ### Added
 
 - A "Speaking speed" setting for ElevenLabs and Deepgram Aura voices. The app
