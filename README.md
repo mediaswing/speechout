@@ -66,6 +66,9 @@ automatically.
   shown in English, and pressing the button again fills it in. A translation
   file for a language that isn't in the list, such as `eo.json` for
   Esperanto, is offered as well, using the `language` name inside it.
+  Only use translation files from people you trust: a file can't run
+  anything or reach your files, but it decides what every button and
+  message says, so a dishonest one could label a button misleadingly.
 
   Languages that use other alphabets, such as Arabic, Hindi or Chinese, aren't
   offered yet, because the window can't draw them. Only the app's own text
