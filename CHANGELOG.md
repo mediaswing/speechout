@@ -10,6 +10,8 @@ the app.
 
 ## [Unreleased]
 
+## [1.5.0] - 2026-10-02
+
 ### Added
 
 - CSV files can be opened and are read as a table. The app says how many
