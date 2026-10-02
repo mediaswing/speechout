@@ -10,6 +10,15 @@ the app.
 
 ## [Unreleased]
 
+### Added
+
+- The app can now be used in about 30 languages besides English, including
+  Welsh, Irish, French, German, Spanish, Polish and Ukrainian. Choose one under
+  Language on the Settings tab, then press "Translate the app". A local AI
+  model in Ollama translates it on your computer in a few minutes, so nothing
+  is sent over the internet. Translations are saved as files you can correct,
+  and anything not translated is shown in English.
+
 ## [1.6.0] - 2026-10-02
 
 ### Changed

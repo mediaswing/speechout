@@ -27,6 +27,11 @@ pub struct Settings {
     pub check_updates: bool,
     /// Say "This is part 2 of 3" at the start of each part of a long text.
     pub announce_parts: bool,
+    /// Language code for the interface, such as "fr". "en" is English.
+    pub language: String,
+    /// Ollama model used to translate the interface. Empty means the image
+    /// description model.
+    pub translation_model: String,
 }
 
 impl Default for Settings {
@@ -43,6 +48,8 @@ impl Default for Settings {
             examples_installed: false,
             check_updates: true,
             announce_parts: false,
+            language: crate::i18n::ENGLISH_CODE.to_owned(),
+            translation_model: String::new(),
         }
     }
 }

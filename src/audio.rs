@@ -27,10 +27,10 @@ pub enum AudioFormat {
 }
 
 impl AudioFormat {
-    pub fn label(self) -> &'static str {
+    pub fn label(self) -> String {
         match self {
-            AudioFormat::Mp3 => "MP3 (smaller file)",
-            AudioFormat::Wav => "WAV (uncompressed)",
+            AudioFormat::Mp3 => crate::i18n::t("format.mp3"),
+            AudioFormat::Wav => crate::i18n::t("format.wav"),
         }
     }
 

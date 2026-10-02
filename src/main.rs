@@ -6,6 +6,7 @@
 mod app;
 mod audio;
 mod document;
+mod i18n;
 mod logging;
 mod paths;
 mod platform;
@@ -70,9 +71,10 @@ fn package(dir: Option<&String>) -> ExitCode {
 fn run_gui() -> ExitCode {
     logging::init();
     let settings = settings::Settings::load();
+    i18n::activate_saved(&paths::languages_dir(), &settings.language);
     let log_status = match logging::set_directory(&settings.log_dir()) {
         Ok(_) => String::new(),
-        Err(e) => format!("Debug logging is off because the log folder could not be opened: {e}."),
+        Err(e) => i18n::tf("status.log_off", &[("error", &e)]),
     };
     log::info!("starting speechout {}", env!("CARGO_PKG_VERSION"));
 

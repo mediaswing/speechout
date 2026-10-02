@@ -13,6 +13,7 @@
 //! * A thick focus ring is drawn around whichever control has focus.
 
 use crate::audio::AudioFormat;
+use crate::i18n::{self, Language, Translation, t, tf};
 use crate::settings::Settings;
 use crate::speech::{self, Provider, Voice};
 use crate::wordlist::{self, Installed, Substitutions};
@@ -48,16 +49,17 @@ enum Tab {
 impl Tab {
     const ALL: [Tab; 3] = [Tab::General, Tab::Settings, Tab::Wordlists];
 
-    fn label(self) -> &'static str {
+    fn label(self) -> String {
         match self {
-            Tab::General => "General",
-            Tab::Settings => "Settings",
-            Tab::Wordlists => "Wordlists",
+            Tab::General => t("tab.general"),
+            Tab::Settings => t("tab.settings"),
+            Tab::Wordlists => t("tab.wordlists"),
         }
     }
 
+    /// Stays the same whatever the interface language, so focus can find it.
     fn id(self) -> Id {
-        Id::new(("tab", self.label()))
+        Id::new(("tab", self as u8))
     }
 }
 
@@ -74,6 +76,8 @@ enum JobKind {
     Saving,
     /// Downloading an AI model into Ollama.
     Downloading,
+    /// Translating the interface with an AI model.
+    Translating,
 }
 
 pub struct SpeechApp {
@@ -104,6 +108,8 @@ pub struct SpeechApp {
     log_dir_input: String,
     wordlists: Vec<Installed>,
     wordlist_to_remove: usize,
+    /// Languages offered on the Settings tab.
+    languages: Vec<Language>,
     focus: Option<Id>,
 }
 
@@ -149,9 +155,10 @@ impl SpeechApp {
             paused: false,
             checking_update: false,
             progress: 0.0,
-            status: format!("Ready. Press {}+O to choose a file. {log_status}", MOD_KEY.1),
+            status: format!("{} {log_status}", tf("status.ready", &[("key_name", &MOD_KEY.1)])),
             wordlists: Vec::new(),
             wordlist_to_remove: 0,
+            languages: i18n::available(&crate::paths::languages_dir()),
             focus: Some(Tab::General.id()),
         };
         app.reload_wordlists();
@@ -195,27 +202,29 @@ impl SpeechApp {
     /// Speaks how far through reading or saving we are (F7).
     fn announce_progress(&mut self) {
         let percent = (self.progress * 100.0).round();
-        let msg = match &self.job {
-            Some((JobKind::Speaking, _)) if self.paused => format!("Paused at {percent} percent."),
-            Some((JobKind::Speaking, _)) => format!("Reading aloud, {percent} percent."),
-            Some((JobKind::Previewing, _)) => "Previewing the voice.".to_owned(),
-            Some((JobKind::Saving, _)) => format!("Saving audio, {percent} percent."),
-            Some((JobKind::Downloading, _)) => format!("Downloading the AI model, {percent} percent."),
-            None if self.setting_up_ollama => "Still setting up Ollama.".to_owned(),
-            None if self.loading_file => "Still opening the file.".to_owned(),
-            None => "Nothing is playing.".to_owned(),
+        let key = match &self.job {
+            Some((JobKind::Speaking, _)) if self.paused => "progress.paused",
+            Some((JobKind::Speaking, _)) => "progress.reading",
+            Some((JobKind::Previewing, _)) => "progress.previewing",
+            Some((JobKind::Saving, _)) => "progress.saving",
+            Some((JobKind::Downloading, _)) => "progress.downloading",
+            Some((JobKind::Translating, _)) => "progress.translating",
+            None if self.setting_up_ollama => "progress.setting_up",
+            None if self.loading_file => "progress.opening",
+            None => "progress.nothing",
         };
+        let msg = tf(key, &[("percent", &percent)]);
         self.announce(msg);
     }
 
     fn copy_text(&mut self, ctx: &egui::Context) {
         if self.text.is_empty() {
-            self.announce("There is no text to copy yet.");
+            self.announce(t("copy.nothing"));
             return;
         }
         ctx.copy_text(self.text.clone());
         let words = self.text.split_whitespace().count();
-        self.announce(format!("Copied {words} words to the clipboard."));
+        self.announce(tf("copy.done", &[("count", &words)]));
     }
 
     fn available_providers(&self) -> Vec<Provider> {
@@ -308,7 +317,7 @@ impl SpeechApp {
             match msg {
                 Msg::Voices(provider, result) => {
                     if let Err(e) = &result {
-                        self.show_error(format!("Could not load voices for {}: {e}", provider.label()));
+                        self.show_error(tf("voices.failed", &[("service", &provider.name()), ("error", e)]));
                     }
                     self.voices.insert(
                         provider,
@@ -322,9 +331,7 @@ impl SpeechApp {
                     let waiting = self.waiting_photo.is_some();
                     match &result {
                         // A waiting photo leads to an offer to download a model instead.
-                        Ok(models) if models.is_empty() && !waiting => self.announce(
-                            "Ollama is running but has no models. Download one that describes photos on the Settings tab.",
-                        ),
+                        Ok(models) if models.is_empty() && !waiting => self.announce(t("models.none")),
                         Ok(models) if models.is_empty() => {}
                         Ok(models) => {
                             if !models.contains(&self.settings.vision_model)
@@ -333,7 +340,7 @@ impl SpeechApp {
                                     self.settings.save();
                                 }
                             if self.tab == Tab::Settings {
-                                self.announce(format!("Found {} local AI model(s).", models.len()));
+                                self.announce(tf("models.found", &[("count", &models.len())]));
                             }
                         }
                         // A waiting photo gets the offer to install or start
@@ -370,13 +377,11 @@ impl SpeechApp {
                             self.ensure_models();
                             match photo {
                                 Some(path) => self.open_file(path, true),
-                                None => self.announce(format!("Downloaded {model}. You can now describe photos.")),
+                                None => self.announce(tf("model.downloaded", &[("model", &model)])),
                             }
                         }
-                        Ok(false) => self.announce(
-                            "Stopped downloading the AI model. What was downloaded is kept, so the next download carries on from there.",
-                        ),
-                        Err(e) => self.show_error(format!("Could not download the AI model. {e}")),
+                        Ok(false) => self.announce(t("model.download_stopped")),
+                        Err(e) => self.show_error(tf("model.download_failed", &[("error", &e)])),
                     }
                 }
                 Msg::OllamaReady(result) => {
@@ -384,14 +389,14 @@ impl SpeechApp {
                     match result {
                         Ok(()) => {
                             // Look for models, then describe the waiting photo.
-                            self.announce("Ollama is running. Looking for a model to describe the photo.");
+                            self.announce(t("ollama.running"));
                             self.models = None;
                             self.ensure_models();
                         }
                         Err(e) => {
                             self.loading_file = false;
                             self.waiting_photo = None;
-                            self.show_error(format!("Could not set up Ollama. {e}"));
+                            self.show_error(tf("ollama.setup_failed", &[("error", &e)]));
                         }
                     }
                 }
@@ -403,14 +408,15 @@ impl SpeechApp {
                             let words = text.split_whitespace().count();
                             self.text = text;
                             self.file = Some(path);
-                            self.announce(format!(
-                                "Loaded {name}, {words} words. Press F5 to read it aloud or {}+S to save it as audio.",
-                                MOD_KEY.1
+                            self.announce(tf(
+                                "file.loaded",
+                                &[("name", &name), ("count", &words), ("key_name", &MOD_KEY.1)],
                             ));
                         }
-                        Err(e) => self.show_error(format!("Could not load {name}. {e}")),
+                        Err(e) => self.show_error(tf("file.load_failed", &[("name", &name), ("error", &e)])),
                     }
                 }
+                Msg::Translated(result) => self.translated(result),
                 Msg::Update(result, requested) => self.update_checked(result, requested),
                 Msg::Status(s) => self.announce(s),
                 Msg::Progress(p) => self.progress = p.clamp(0.0, 1.0),
@@ -436,10 +442,7 @@ impl SpeechApp {
             Ok(Some(release)) => release,
             Ok(None) => {
                 if requested {
-                    self.announce(format!(
-                        "You have the latest version, {}.",
-                        env!("CARGO_PKG_VERSION")
-                    ));
+                    self.announce(tf("update.latest", &[("version", &env!("CARGO_PKG_VERSION"))]));
                 }
                 return;
             }
@@ -453,12 +456,10 @@ impl SpeechApp {
         };
         log::info!("update available: {}", release.version);
         let open = rfd::MessageDialog::new()
-            .set_title("Update available")
-            .set_description(format!(
-                "Version {} of the {APP_TITLE} is available. You have version {}.\n\n\
-                 Open the download page in your web browser?",
-                release.version,
-                env!("CARGO_PKG_VERSION")
+            .set_title(t("update.title"))
+            .set_description(tf(
+                "update.question",
+                &[("version", &release.version), ("app", &APP_TITLE), ("current", &env!("CARGO_PKG_VERSION"))],
             ))
             .set_buttons(rfd::MessageButtons::YesNo)
             .set_level(rfd::MessageLevel::Info)
@@ -466,14 +467,11 @@ impl SpeechApp {
             == rfd::MessageDialogResult::Yes;
         if open {
             match crate::platform::open_url(&release.url) {
-                Ok(()) => self.announce(format!("Opened the download page for version {}.", release.version)),
-                Err(e) => self.show_error(format!("{e}. The download page is {}", release.url)),
+                Ok(()) => self.announce(tf("update.opened", &[("version", &release.version)])),
+                Err(e) => self.show_error(tf("update.open_failed", &[("error", &e), ("url", &release.url)])),
             }
         } else {
-            self.announce(format!(
-                "Version {} is available. You can download it later from the Settings tab.",
-                release.version
-            ));
+            self.announce(tf("update.later", &[("version", &release.version)]));
         }
     }
 
@@ -482,7 +480,7 @@ impl SpeechApp {
             return;
         }
         self.checking_update = true;
-        self.announce("Checking for updates.");
+        self.announce(t("update.checking"));
         self.rep.spawn(|rep| worker::check_for_update(rep, true));
     }
 
@@ -491,21 +489,21 @@ impl SpeechApp {
             return;
         }
         let Some(path) = rfd::FileDialog::new()
-            .set_title("Choose a document or photo")
-            .add_filter("Documents and photos", &["pdf", "txt", "docx", "csv", "jpg", "jpeg", "heic", "heif"])
-            .add_filter("Documents", &["pdf", "txt", "docx", "csv"])
-            .add_filter("Photos", &["jpg", "jpeg", "heic", "heif"])
+            .set_title(t("file.dialog_title"))
+            .add_filter(t("file.filter_all"), &["pdf", "txt", "docx", "csv", "jpg", "jpeg", "heic", "heif"])
+            .add_filter(t("file.filter_documents"), &["pdf", "txt", "docx", "csv"])
+            .add_filter(t("file.filter_photos"), &["jpg", "jpeg", "heic", "heif"])
             .pick_file()
         else {
             return;
         };
         let Some(kind) = crate::document::FileKind::from_path(&path) else {
-            self.show_error("That type of file is not supported. Choose a PDF, TXT, DOCX, CSV, JPEG or HEIC file.");
+            self.show_error(t("file.unsupported"));
             return;
         };
         let is_image = kind == crate::document::FileKind::Image;
         if is_image && matches!(self.job, Some((JobKind::Downloading, _))) {
-            self.announce("The AI model is still downloading. Choose the photo again when it has finished.");
+            self.announce(t("file.model_downloading"));
             return;
         }
         // Check Ollama first when no model is chosen, when Ollama was not
@@ -525,7 +523,7 @@ impl SpeechApp {
             }
             self.ensure_models();
             self.loading_file = true;
-            self.announce(format!("Looking for the local AI model to describe {}.", file_name(&path)));
+            self.announce(tf("file.looking_for_model", &[("name", &file_name(&path))]));
             self.waiting_photo = Some(path);
             return;
         }
@@ -538,25 +536,19 @@ impl SpeechApp {
         let name = file_name(&path);
         let installed = crate::platform::ollama_installed();
         let manager = crate::platform::package_manager();
-        let intro = "Photos are described by Ollama, a free program that runs an AI model on this computer, \
-                     so your photos are not sent anywhere.";
+        let intro = t("ollama.intro");
         let (title, question) = match (installed, manager) {
-            (true, _) => ("Start Ollama", format!("{intro}\n\nOllama is installed but not running. Start it now?")),
+            (true, _) => (t("ollama.start_title"), t("ollama.start_question")),
             (false, Some(manager)) => {
-                let password = if cfg!(target_os = "linux") { " You will be asked for your password." } else { "" };
-                (
-                    "Install Ollama",
-                    format!(
-                        "{intro}\n\nOllama is not installed. Install it now with {manager}? It is a large download \
-                         and can take several minutes.{password}"
-                    ),
-                )
+                let mut question = tf("ollama.install_question", &[("manager", &manager)]);
+                if cfg!(target_os = "linux") {
+                    question = format!("{question} {}", t("ollama.password"));
+                }
+                (t("ollama.install_title"), question)
             }
-            (false, None) => (
-                "Install Ollama",
-                format!("{intro}\n\nOllama is not installed. Open the Ollama download page in your web browser?"),
-            ),
+            (false, None) => (t("ollama.install_title"), t("ollama.download_question")),
         };
+        let question = format!("{intro}\n\n{question}");
         let yes = rfd::MessageDialog::new()
             .set_title(title)
             .set_description(question)
@@ -565,15 +557,14 @@ impl SpeechApp {
             .show()
             == rfd::MessageDialogResult::Yes;
         if !yes {
-            self.announce(format!(
-                "Did not describe {name}. To describe photos, install Ollama from ollama.com and start it."
-            ));
+            self.announce(tf("ollama.declined", &[("name", &name)]));
             return;
         }
         if !installed && manager.is_none() {
-            match crate::platform::open_url("https://ollama.com/download") {
-                Ok(()) => self.announce("Opened the Ollama download page. Install Ollama, then choose the photo again."),
-                Err(e) => self.show_error(format!("{e}. Download Ollama from https://ollama.com/download")),
+            const DOWNLOAD_PAGE: &str = "https://ollama.com/download";
+            match crate::platform::open_url(DOWNLOAD_PAGE) {
+                Ok(()) => self.announce(t("ollama.page_opened")),
+                Err(e) => self.show_error(tf("ollama.page_failed", &[("error", &e), ("url", &DOWNLOAD_PAGE)])),
             }
             return;
         }
@@ -581,10 +572,8 @@ impl SpeechApp {
         self.loading_file = true;
         self.waiting_photo = Some(path);
         self.announce(match manager {
-            Some(manager) if !installed => {
-                format!("Installing Ollama with {manager}. This can take several minutes. You will hear when it is done.")
-            }
-            _ => "Starting Ollama.".to_owned(),
+            Some(manager) if !installed => tf("ollama.installing", &[("manager", &manager)]),
+            _ => t("ollama.starting"),
         });
         self.rep.spawn(move |rep| worker::set_up_ollama(rep, !installed));
     }
@@ -594,38 +583,28 @@ impl SpeechApp {
     fn offer_model_download(&mut self, photo: Option<PathBuf>) {
         let model = crate::vision::SUGGESTED_MODEL;
         let yes = rfd::MessageDialog::new()
-            .set_title("Download an AI model")
-            .set_description(format!(
-                "Ollama does not have an AI model that can describe photos yet.\n\nDownload {model} now? It is {} \
-                 and can take a while. It is stored by Ollama on this computer. You can press Escape to stop.",
-                crate::vision::SUGGESTED_MODEL_SIZE
-            ))
+            .set_title(t("model.download_title"))
+            .set_description(tf("model.download_question", &[("model", &model), ("size", &model_size())]))
             .set_buttons(rfd::MessageButtons::YesNo)
             .set_level(rfd::MessageLevel::Info)
             .show()
             == rfd::MessageDialogResult::Yes;
         if !yes {
-            self.announce("No model was downloaded. You can download one later on the Settings tab.");
+            self.announce(t("model.not_downloaded"));
             return;
         }
         let control = Arc::new(Control::default());
         self.job = Some((JobKind::Downloading, control.clone()));
         self.progress = 0.0;
         self.waiting_photo = photo;
-        self.announce(format!(
-            "Downloading {model}, {}. You will hear the progress. Press Escape to stop.",
-            crate::vision::SUGGESTED_MODEL_SIZE
-        ));
+        self.announce(tf("model.downloading", &[("model", &model), ("size", &model_size())]));
         self.rep.spawn(move |rep| worker::download_model(rep, control, model.to_owned()));
     }
 
     fn open_file(&mut self, path: PathBuf, is_image: bool) {
         self.loading_file = true;
-        self.announce(if is_image {
-            format!("Describing {}. This can take a minute.", file_name(&path))
-        } else {
-            format!("Opening {}.", file_name(&path))
-        });
+        let key = if is_image { "file.describing" } else { "file.opening" };
+        self.announce(tf(key, &[("name", &file_name(&path))]));
         let model = self.settings.vision_model.clone();
         let resolve = self.settings.resolve_location;
         self.rep.spawn(move |rep| worker::load_file(rep, path, model, resolve));
@@ -638,7 +617,7 @@ impl SpeechApp {
             return None;
         }
         if self.text.trim().is_empty() {
-            self.announce(format!("There is nothing to read yet. Press {}+O to choose a file.", MOD_KEY.1));
+            self.announce(tf("read.nothing", &[("key_name", &MOD_KEY.1)]));
             return None;
         }
         let subs = Substitutions::new(&self.wordlists, &self.settings.disabled_wordlists);
@@ -653,7 +632,7 @@ impl SpeechApp {
             Some(v) => v.id.clone(),
             None if provider == Provider::System => String::new(),
             None => {
-                self.announce("Choose a voice first. The voice list may still be loading.");
+                self.announce(t("voice.choose_first"));
                 return None;
             }
         };
@@ -669,21 +648,28 @@ impl SpeechApp {
     }
 
     /// For cloud voices, how much text the job will send, such as
-    /// " 48,250 characters will be sent to ElevenLabs."
-    fn usage_note(job: &SpeechJob, prefix: &str) -> String {
+    /// " 48,250 characters will be sent to ElevenLabs." With `up_to`, says
+    /// "Up to", because reading aloud stops sending when the user stops it.
+    fn usage_note(job: &SpeechJob, up_to: bool) -> String {
         if job.provider == Provider::System {
             return String::new();
         }
         let count = speech::billable_chars(job.provider, &job.text, job.announce_parts);
-        let noun = if count == 1 { "character" } else { "characters" };
-        format!(" {prefix}{} {noun} will be sent to {}.", speech::format_count(count), job.provider.short_name())
+        let key = match (up_to, count == 1) {
+            (true, true) => "usage.up_to.one",
+            (true, false) => "usage.up_to.other",
+            (false, true) => "usage.exact.one",
+            (false, false) => "usage.exact.other",
+        };
+        let note = tf(key, &[("count", &speech::format_count(count)), ("service", &job.provider.short_name())]);
+        format!(" {note}")
     }
 
     fn read_aloud(&mut self) {
         let Some(job) = self.build_job() else { return };
         // Reading aloud stops sending text when the user presses Stop.
-        let usage = Self::usage_note(&job, "Up to ");
-        self.start_speaking(job, format!("Reading aloud. Press F6 to pause or Escape to stop.{usage}"));
+        let usage = Self::usage_note(&job, true);
+        self.start_speaking(job, format!("{}{usage}", t("read.started")));
     }
 
     /// Speaks a short sentence with the chosen voice and speed, through the
@@ -694,7 +680,7 @@ impl SpeechApp {
         }
         let Some(mut job) = self.job_for(PREVIEW_TEXT.to_owned()) else { return };
         job.preview = true;
-        self.start_speaking(job, "Previewing the voice.".to_owned());
+        self.start_speaking(job, t("progress.previewing"));
     }
 
     fn start_speaking(&mut self, job: SpeechJob, message: String) {
@@ -711,7 +697,7 @@ impl SpeechApp {
         if let Some((JobKind::Speaking, control)) = &self.job {
             self.paused = !self.paused;
             control.set_paused(self.paused);
-            let msg = if self.paused { "Paused. Press F6 to resume." } else { "Resumed." };
+            let msg = if self.paused { t("read.paused") } else { t("read.resumed") };
             self.announce(msg);
         }
     }
@@ -719,7 +705,7 @@ impl SpeechApp {
     fn stop(&mut self) {
         if let Some((_, control)) = &self.job {
             control.stop();
-            self.announce("Stopping.");
+            self.announce(t("read.stopping"));
         }
     }
 
@@ -733,9 +719,9 @@ impl SpeechApp {
             .as_ref()
             .and_then(|f| f.file_stem())
             .map(|s| s.to_string_lossy().into_owned())
-            .unwrap_or_else(|| "speech".into());
+            .unwrap_or_else(|| t("save.default_name"));
         let Some(mut path) = rfd::FileDialog::new()
-            .set_title("Save spoken text as audio")
+            .set_title(t("save.dialog_title"))
             .set_file_name(format!("{stem}.{}", format.extension()))
             .add_filter(format.label(), &[format.extension()])
             .save_file()
@@ -759,8 +745,9 @@ impl SpeechApp {
         let control = Arc::new(Control::default());
         self.job = Some((JobKind::Saving, control.clone()));
         self.progress = 0.0;
-        let usage = Self::usage_note(&job, "");
-        self.announce(format!("Preparing {}.{usage} Press Escape to cancel.", file_name(&path)));
+        let usage = Self::usage_note(&job, false);
+        let preparing = tf("save.preparing", &[("name", &file_name(&path))]);
+        self.announce(format!("{preparing}{usage} {}", t("save.cancel_hint")));
         self.rep.spawn(move |rep| worker::save(rep, control, job, path, format));
     }
 
@@ -780,30 +767,31 @@ impl SpeechApp {
                         self.api_keys.insert(provider, stored);
                     }
                     self.voices.remove(&provider);
-                    saved.push(provider.label());
+                    saved.push(provider.name());
                 }
                 Err(e) => {
-                    self.show_error(format!("Could not save the {} key: {e}", provider.label()));
+                    self.show_error(tf("keys.save_failed", &[("service", &provider.name()), ("error", &e)]));
                     return;
                 }
             }
         }
         self.key_inputs.clear();
         if saved.is_empty() {
-            self.announce("Type a key into one of the API key boxes first.");
+            self.announce(t("keys.type_first"));
         } else {
-            self.announce(format!("Saved the API key for {} in {where_}.", saved.join(" and ")));
+            let services = saved.join(&format!(" {} ", t("keys.and")));
+            self.announce(tf("keys.saved", &[("services", &services), ("place", &where_)]));
         }
     }
 
     fn remove_keys(&mut self) {
         if self.api_keys.is_empty() {
-            self.announce("No API keys are saved.");
+            self.announce(t("keys.none"));
             return;
         }
         let confirmed = rfd::MessageDialog::new()
-            .set_title("Remove saved API keys")
-            .set_description("Remove every saved API key? You will need to enter them again to use cloud voices.")
+            .set_title(t("keys.remove_title"))
+            .set_description(t("keys.remove_question"))
             .set_buttons(rfd::MessageButtons::YesNo)
             .set_level(rfd::MessageLevel::Warning)
             .show()
@@ -819,7 +807,7 @@ impl SpeechApp {
         }
         self.api_keys.clear();
         self.voices.retain(|p, _| *p == Provider::System);
-        self.announce("Removed all saved API keys.");
+        self.announce(t("keys.removed"));
     }
 
     fn apply_log_dir(&mut self, dir: PathBuf) {
@@ -828,16 +816,16 @@ impl SpeechApp {
                 self.log_dir_input = dir.display().to_string();
                 self.settings.log_dir = Some(dir);
                 self.settings.save();
-                self.announce(format!("Debug logs are now saved to {}.", file.display()));
+                self.announce(tf("settings.log_saved", &[("file", &file.display())]));
             }
-            Err(e) => self.show_error(format!("Could not use that folder for logs: {e}")),
+            Err(e) => self.show_error(tf("settings.log_failed", &[("error", &e)])),
         }
     }
 
     fn import_wordlist(&mut self) {
         let Some(path) = rfd::FileDialog::new()
-            .set_title("Import a wordlist")
-            .add_filter("XML wordlist", &["xml"])
+            .set_title(t("wordlists.import_title"))
+            .add_filter(t("wordlists.filter"), &["xml"])
             .pick_file()
         else {
             return;
@@ -845,9 +833,12 @@ impl SpeechApp {
         match wordlist::import(&path, &crate::paths::wordlist_dir()) {
             Ok(name) => {
                 self.reload_wordlists();
-                self.announce(format!("Imported and enabled the wordlist \"{name}\"."));
+                self.announce(tf("wordlists.imported", &[("name", &name)]));
             }
-            Err(e) => self.show_error(format!("Could not import {}: {e:#}", file_name(&path))),
+            Err(e) => {
+                let error = format!("{e:#}");
+                self.show_error(tf("wordlists.import_failed", &[("name", &file_name(&path)), ("error", &error)]));
+            }
         }
     }
 
@@ -856,8 +847,8 @@ impl SpeechApp {
         let file = item.file_name.clone();
         let title = display_name(item);
         let confirmed = rfd::MessageDialog::new()
-            .set_title("Remove wordlist")
-            .set_description(format!("Remove the wordlist \"{title}\"?"))
+            .set_title(t("wordlists.remove_title"))
+            .set_description(tf("wordlists.remove_question", &[("name", &title)]))
             .set_buttons(rfd::MessageButtons::YesNo)
             .show()
             == rfd::MessageDialogResult::Yes;
@@ -869,9 +860,150 @@ impl SpeechApp {
                 self.settings.disabled_wordlists.remove(&file);
                 self.settings.save();
                 self.reload_wordlists();
-                self.announce(format!("Removed the wordlist \"{title}\"."));
+                self.announce(tf("wordlists.removed", &[("name", &title)]));
             }
             Err(e) => self.show_error(format!("{e:#}")),
+        }
+    }
+
+    // ----- language -----------------------------------------------------
+
+    fn current_language(&self) -> Language {
+        self.languages
+            .iter()
+            .find(|l| l.code == self.settings.language)
+            .unwrap_or(&self.languages[0])
+            .clone()
+    }
+
+    /// The Ollama model to translate with: the one chosen for translating if
+    /// Ollama has it, otherwise the image description model, otherwise the
+    /// first model.
+    fn translation_model(&self) -> Option<String> {
+        let Some(Loadable::Ready(models)) = &self.models else { return None };
+        [&self.settings.translation_model, &self.settings.vision_model]
+            .into_iter()
+            .find(|m| models.contains(m))
+            .or_else(|| models.first())
+            .cloned()
+    }
+
+    /// Switches the interface to the language at `index` in the list, if it
+    /// has been translated. The arrow keys change the list straight away, so
+    /// this never opens a dialog of its own.
+    fn choose_language(&mut self, index: usize) {
+        let Some(language) = self.languages.get(index).cloned() else { return };
+        self.settings.language = language.code.clone();
+        self.settings.save();
+        let label = language.label();
+        if language.code == i18n::ENGLISH_CODE {
+            i18n::activate(None);
+            self.announce(tf("language.chosen", &[("language", &label)]));
+            return;
+        }
+        let dir = crate::paths::languages_dir();
+        if !i18n::file_for(&dir, &language.code).exists() {
+            i18n::activate(None);
+            let button = tf("language.translate", &[("language", &label)]);
+            self.announce(tf("language.not_yet", &[("language", &label), ("button", &button)]));
+            return;
+        }
+        match i18n::load(&dir, &language.code) {
+            Ok(translation) => {
+                // Switch first, so the message is in the new language.
+                i18n::activate(Some(&translation));
+                let missing = translation.missing().len();
+                self.announce(if missing == 0 {
+                    tf("language.chosen", &[("language", &label)])
+                } else {
+                    tf("language.partly", &[("language", &label), ("count", &missing)])
+                });
+            }
+            Err(e) => {
+                i18n::activate(None);
+                let error = format!("{e:#}");
+                self.announce(tf("language.load_failed", &[("language", &label), ("error", &error)]));
+            }
+        }
+    }
+
+    /// Translates the interface into the chosen language with the local AI
+    /// model. Only the text not yet translated is sent, unless everything
+    /// is, when the user is asked whether to start again.
+    fn translate_app(&mut self) {
+        if self.is_busy() {
+            return;
+        }
+        let language = self.current_language();
+        if language.code == i18n::ENGLISH_CODE {
+            return;
+        }
+        let Some(model) = self.translation_model() else {
+            // Ollama may have been started since the last look.
+            if !matches!(self.models, Some(Loadable::Loading)) {
+                self.models = None;
+                self.ensure_models();
+            }
+            self.show_error(t("language.no_model"));
+            return;
+        };
+        let dir = crate::paths::languages_dir();
+        let file = i18n::file_for(&dir, &language.code);
+        let mut translation = match i18n::load(&dir, &language.code) {
+            Ok(translation) => translation,
+            Err(e) => {
+                // Keep a damaged file to one side rather than lose someone's
+                // corrections, and start again.
+                if file.exists() {
+                    log::warn!("translation {} is damaged, starting again: {e:#}", language.code);
+                    if let Err(e) = std::fs::rename(&file, file.with_extension("json.bak")) {
+                        let error = format!("{e:#}");
+                        self.show_error(tf("language.load_failed", &[("language", &language.label()), ("error", &error)]));
+                        return;
+                    }
+                }
+                Translation::new(&language)
+            }
+        };
+        if translation.missing().is_empty() {
+            let again = rfd::MessageDialog::new()
+                .set_title(t("language.again_title"))
+                .set_description(tf("language.again_question", &[("language", &language.label())]))
+                .set_buttons(rfd::MessageButtons::YesNo)
+                .set_level(rfd::MessageLevel::Info)
+                .show()
+                == rfd::MessageDialogResult::Yes;
+            if !again {
+                return;
+            }
+            translation.strings.clear();
+        }
+        let control = Arc::new(Control::default());
+        self.job = Some((JobKind::Translating, control.clone()));
+        self.progress = 0.0;
+        self.announce(tf("language.translating", &[("language", &language.label()), ("model", &model)]));
+        self.rep.spawn(move |rep| worker::translate(rep, control, language, model, translation));
+    }
+
+    fn translated(&mut self, result: Result<worker::Translated, String>) {
+        self.job = None;
+        match result {
+            Ok(done) => {
+                // Use what was translated, even if the job was stopped part
+                // way, then report in the new language.
+                if self.settings.language == done.language.code {
+                    i18n::activate(Some(&done.translation));
+                }
+                let label = done.language.label();
+                self.announce(if done.stopped {
+                    t("language.stopped")
+                } else if done.left == 0 {
+                    tf("language.done", &[("language", &label)])
+                } else {
+                    tf("language.done_partly", &[("language", &label), ("count", &done.left)])
+                });
+            }
+            Err(e) => self.show_error(tf("language.failed", &[("error", &e)])),
         }
     }
 
@@ -942,35 +1074,38 @@ impl SpeechApp {
                 }
                 if resp.clicked() && !selected {
                     self.switch_tab(tab);
-                    self.announce(format!("{} tab.", tab.label()));
+                    self.announce(tf("tab.chosen", &[("tab", &tab.label())]));
                 }
             }
         });
     }
 
     fn general_tab(&mut self, ui: &mut Ui) {
-        heading(ui, "Read a document or describe a photo");
+        heading(ui, &t("general.heading"));
 
         let mut file_text = match (&self.file, self.loading_file) {
-            (_, true) => "Loading…".to_owned(),
+            (_, true) => t("general.loading"),
             (Some(p), _) => p.display().to_string(),
-            (None, _) => "No file chosen".to_owned(),
+            (None, _) => t("general.no_file"),
         };
-        text_field(ui, "Current file", &mut file_text, false);
+        text_field(ui, &t("general.current_file"), &mut file_text, false);
 
-        if full_button(ui, &format!("Choose a file… ({}+O)", MOD_KEY.0), !self.loading_file).clicked() {
+        if full_button(ui, &tf("general.choose_file", &[("key", &MOD_KEY.0)]), !self.loading_file).clicked() {
             self.choose_file();
         }
 
         // Speech service.
         let providers = self.available_providers();
         let mut index = providers.iter().position(|p| *p == self.active_provider()).unwrap_or(0);
-        let labels: Vec<String> = providers.iter().map(|p| p.label().to_owned()).collect();
-        if dropdown(ui, "provider", "Speech service", &labels, &mut index, !self.is_busy()) {
+        let labels: Vec<String> = providers.iter().map(|p| p.name()).collect();
+        if dropdown(ui, "provider", &t("general.service"), &labels, &mut index, !self.is_busy()) {
             let provider = providers[index];
             self.settings.provider = provider;
             self.settings.save();
-            self.announce(format!("Speech service: {}. {}", provider.label(), provider.privacy_note()));
+            self.announce(tf(
+                "general.service_chosen",
+                &[("service", &provider.name()), ("note", &provider.privacy_note())],
+            ));
         }
         // Where the speech is made, so it is clear when text leaves the computer.
         ui.label(self.active_provider().privacy_note());
@@ -980,21 +1115,21 @@ impl SpeechApp {
         self.ensure_voices(provider);
         let voices = self.voice_list(provider).to_vec();
         let (names, empty_text) = match self.voices.get(&provider) {
-            Some(Loadable::Ready(v)) if v.is_empty() => (vec![], "No voices found"),
-            Some(Loadable::Ready(v)) => (v.iter().map(|v| v.name.clone()).collect(), ""),
-            Some(Loadable::Failed) => (vec![], "Voices could not be loaded"),
-            _ => (vec![], "Loading voices…"),
+            Some(Loadable::Ready(v)) if v.is_empty() => (vec![], "general.no_voices"),
+            Some(Loadable::Ready(v)) => (v.iter().map(voice_name).collect(), ""),
+            Some(Loadable::Failed) => (vec![], "general.voices_failed"),
+            _ => (vec![], "general.loading_voices"),
         };
-        let names = if names.is_empty() { vec![empty_text.to_owned()] } else { names };
+        let names = if names.is_empty() { vec![t(empty_text)] } else { names };
         let current = self.current_voice(provider).map(|v| v.id.clone());
         let mut vindex = voices.iter().position(|v| Some(&v.id) == current.as_ref()).unwrap_or(0);
-        if dropdown(ui, "voice", "Voice", &names, &mut vindex, !voices.is_empty() && !self.is_busy())
+        if dropdown(ui, "voice", &t("general.voice"), &names, &mut vindex, !voices.is_empty() && !self.is_busy())
             && let Some(v) = voices.get(vindex) {
                 self.settings.set_voice(provider, v.id.clone());
                 self.settings.save();
             }
         if matches!(self.voices.get(&provider), Some(Loadable::Failed))
-            && full_button(ui, "Try loading voices again", true).clicked()
+            && full_button(ui, &t("general.retry_voices"), true).clicked()
         {
             self.voices.remove(&provider);
         }
@@ -1005,64 +1140,59 @@ impl SpeechApp {
             let labels: Vec<String> = speeds.iter().map(|s| speech::speed_label(*s)).collect();
             let current = self.settings.speed_for(provider);
             let mut sindex = speeds.iter().position(|s| *s == current).unwrap_or(0);
-            if dropdown(ui, "speed", "Speaking speed", &labels, &mut sindex, !self.is_busy()) {
+            if dropdown(ui, "speed", &t("general.speed"), &labels, &mut sindex, !self.is_busy()) {
                 self.settings.set_speed(provider, speeds[sindex]);
                 self.settings.save();
             }
         }
         let can_preview = !self.is_busy() && (provider == Provider::System || !voices.is_empty());
-        if full_button(ui, "Preview voice", can_preview).clicked() {
+        if full_button(ui, &t("general.preview"), can_preview).clicked() {
             self.preview_voice();
         }
 
         let has_text = !self.text.is_empty();
         let speaking = matches!(self.job, Some((JobKind::Speaking, _)));
-        if full_button(ui, "Read aloud (F5)", has_text && !self.is_busy()).clicked() {
+        if full_button(ui, &t("general.read_aloud"), has_text && !self.is_busy()).clicked() {
             self.read_aloud();
         }
-        let pause_label = if self.paused { "Resume (F6)" } else { "Pause (F6)" };
-        if full_button(ui, pause_label, speaking).clicked() {
+        let pause_label = if self.paused { t("general.resume") } else { t("general.pause") };
+        if full_button(ui, &pause_label, speaking).clicked() {
             self.toggle_pause();
         }
         let stop_label = match self.job {
-            Some((JobKind::Saving, _)) => "Cancel saving (Esc)",
-            Some((JobKind::Downloading, _)) => "Stop downloading (Esc)",
-            _ => "Stop (Esc)",
+            Some((JobKind::Saving, _)) => t("general.cancel_saving"),
+            Some((JobKind::Downloading, _)) => t("general.stop_downloading"),
+            Some((JobKind::Translating, _)) => t("general.stop_translating"),
+            _ => t("general.stop"),
         };
-        if full_button(ui, stop_label, self.is_busy()).clicked() {
+        if full_button(ui, &stop_label, self.is_busy()).clicked() {
             self.stop();
         }
 
         let formats = [AudioFormat::Mp3, AudioFormat::Wav];
-        let labels: Vec<String> = formats.iter().map(|f| f.label().to_owned()).collect();
+        let labels: Vec<String> = formats.iter().map(|f| f.label()).collect();
         let mut findex = formats.iter().position(|f| *f == self.settings.audio_format).unwrap_or(0);
-        if dropdown(ui, "format", "Audio file format", &labels, &mut findex, !self.is_busy()) {
+        if dropdown(ui, "format", &t("general.format"), &labels, &mut findex, !self.is_busy()) {
             self.settings.audio_format = formats[findex];
             self.settings.save();
         }
-        if full_button(ui, &format!("Save spoken text as audio… ({}+S)", MOD_KEY.0), has_text && !self.is_busy()).clicked() {
+        if full_button(ui, &tf("general.save", &[("key", &MOD_KEY.0)]), has_text && !self.is_busy()).clicked() {
             self.save_audio();
         }
-        if full_button(ui, "Copy text to the clipboard", has_text).clicked() {
+        if full_button(ui, &t("general.copy"), has_text).clicked() {
             let ctx = ui.ctx().clone();
             self.copy_text(&ctx);
         }
     }
 
     fn settings_tab(&mut self, ui: &mut Ui) {
-        heading(ui, "Settings");
+        heading(ui, &t("settings.heading"));
+        self.language_section(ui);
 
         // Image description model.
-        self.ensure_models();
-        let (models, placeholder) = match &self.models {
-            Some(Loadable::Ready(m)) if !m.is_empty() => (m.clone(), String::new()),
-            Some(Loadable::Ready(_)) => (vec![], "No models installed in Ollama".to_owned()),
-            Some(Loadable::Failed) => (vec![], "Ollama is not running".to_owned()),
-            _ => (vec![], "Looking for Ollama…".to_owned()),
-        };
-        let shown = if models.is_empty() { vec![placeholder] } else { models.clone() };
+        let (models, shown) = self.model_choices();
         let mut mindex = models.iter().position(|m| *m == self.settings.vision_model).unwrap_or(0);
-        if dropdown(ui, "model", "Image description model (Ollama)", &shown, &mut mindex, !models.is_empty()) {
+        if dropdown(ui, "model", &t("settings.model"), &shown, &mut mindex, !models.is_empty()) {
             self.settings.vision_model = models[mindex].clone();
             self.settings.save();
         }
@@ -1070,127 +1200,155 @@ impl SpeechApp {
         if let Some(Loadable::Ready(m)) = &self.models
             && !crate::vision::has_vision_model(m)
         {
-            let label = format!(
-                "Download a model that describes photos ({}, {})",
-                crate::vision::SUGGESTED_MODEL,
-                crate::vision::SUGGESTED_MODEL_SIZE
-            );
+            let label =
+                tf("settings.download_model", &[("model", &crate::vision::SUGGESTED_MODEL), ("size", &model_size())]);
             if full_button(ui, &label, !self.is_busy()).clicked() {
                 self.offer_model_download(None);
             }
         }
-        if full_button(ui, "Refresh the list of models", !matches!(self.models, Some(Loadable::Loading))).clicked() {
+        if full_button(ui, &t("settings.refresh_models"), !matches!(self.models, Some(Loadable::Loading))).clicked() {
             self.models = None;
             self.ensure_models();
-            self.announce("Looking for local AI models.");
+            self.announce(t("models.looking"));
         }
 
-        let location_options = vec![
-            "Do not read out where photos were taken".to_owned(),
-            "Read out where geotagged photos were taken (looks up the place with OpenStreetMap)".to_owned(),
-        ];
+        let location_options = vec![t("settings.location_off"), t("settings.location_on")];
         let mut lindex = usize::from(self.settings.resolve_location);
-        if dropdown(ui, "location", "Photo location", &location_options, &mut lindex, true) {
+        if dropdown(ui, "location", &t("settings.location"), &location_options, &mut lindex, true) {
             self.settings.resolve_location = lindex == 1;
             self.settings.save();
         }
 
-        let part_options = vec![
-            "Run the parts on with no announcement".to_owned(),
-            "Say \"This is part 1 of 3\" at the start of each part".to_owned(),
-        ];
+        let part_options = vec![t("settings.parts_run_on"), t("settings.parts_announce")];
         let mut pindex = usize::from(self.settings.announce_parts);
-        let label = format!("Long texts (read in parts of up to {} characters)", speech::format_count(speech::PART_CHARS));
+        let label = tf("settings.parts", &[("count", &speech::format_count(speech::PART_CHARS))]);
         if dropdown(ui, "parts", &label, &part_options, &mut pindex, true) {
             self.settings.announce_parts = pindex == 1;
             self.settings.save();
         }
 
-        let update_options = vec![
-            "Check for updates when the app starts".to_owned(),
-            "Do not check for updates automatically".to_owned(),
-        ];
+        let update_options = vec![t("settings.updates_on"), t("settings.updates_off")];
         let mut uindex = usize::from(!self.settings.check_updates);
-        if dropdown(ui, "updates", "Updates", &update_options, &mut uindex, true) {
+        if dropdown(ui, "updates", &t("settings.updates"), &update_options, &mut uindex, true) {
             self.settings.check_updates = uindex == 0;
             self.settings.save();
         }
-        if full_button(ui, "Check for updates now", !self.checking_update).clicked() {
+        if full_button(ui, &t("settings.check_now"), !self.checking_update).clicked() {
             self.check_for_update();
         }
 
         let mut dir = self.log_dir_input.clone();
-        if text_field(ui, "Debug log folder", &mut dir, true).changed() {
+        if text_field(ui, &t("settings.log_folder"), &mut dir, true).changed() {
             self.log_dir_input = dir;
         }
-        if full_button(ui, "Choose the debug log folder…", true).clicked()
+        if full_button(ui, &t("settings.choose_log"), true).clicked()
             && let Some(dir) = rfd::FileDialog::new()
-                .set_title("Choose where to save debug logs")
+                .set_title(t("settings.log_dialog"))
                 .set_directory(self.settings.log_dir())
                 .pick_folder()
             {
                 self.apply_log_dir(dir);
             }
-        if full_button(ui, "Use the folder typed above for debug logs", true).clicked() {
+        if full_button(ui, &t("settings.use_typed_log"), true).clicked() {
             let typed = PathBuf::from(self.log_dir_input.trim());
             if typed.is_absolute() {
                 self.apply_log_dir(typed);
             } else {
-                self.show_error("Type a full folder path, for example one starting with a drive letter or a slash.");
+                self.show_error(t("settings.full_path"));
             }
         }
 
         ui.add_space(8.0);
-        heading(ui, "Cloud voice API keys");
-        ui.label(format!(
-            "Keys are stored in {}. Leave a box empty to keep the key already saved.",
-            crate::platform::secret_store_description()
-        ));
+        heading(ui, &t("keys.heading"));
+        ui.label(tf("keys.stored", &[("place", &crate::platform::secret_store_description())]));
         for provider in Provider::ALL {
             if provider.key_name().is_none() {
                 continue;
             }
-            let state = if self.api_keys.contains_key(&provider) { "a key is saved" } else { "no key saved" };
+            let key = if self.api_keys.contains_key(&provider) { "keys.label_saved" } else { "keys.label_none" };
+            let label = tf(key, &[("service", &provider.name())]);
             let input = self.key_inputs.entry(provider).or_default();
-            password_field(ui, &format!("{} API key ({state})", provider.label()), input);
+            password_field(ui, &label, input);
         }
-        if full_button(ui, "Save API keys", true).clicked() {
+        if full_button(ui, &t("keys.save"), true).clicked() {
             self.save_keys();
         }
-        if full_button(ui, "Remove all saved API keys…", !self.api_keys.is_empty()).clicked() {
+        if full_button(ui, &t("keys.remove"), !self.api_keys.is_empty()).clicked() {
             self.remove_keys();
         }
     }
 
+    /// The Ollama models, and what to show in a list of them: the models, or
+    /// a line saying why there are none.
+    fn model_choices(&mut self) -> (Vec<String>, Vec<String>) {
+        self.ensure_models();
+        let (models, placeholder) = match &self.models {
+            Some(Loadable::Ready(m)) if !m.is_empty() => (m.clone(), String::new()),
+            Some(Loadable::Ready(_)) => (vec![], t("settings.no_models")),
+            Some(Loadable::Failed) => (vec![], t("settings.ollama_off")),
+            _ => (vec![], t("settings.looking")),
+        };
+        let shown = if models.is_empty() { vec![placeholder] } else { models.clone() };
+        (models, shown)
+    }
+
+    fn language_section(&mut self, ui: &mut Ui) {
+        let translating = matches!(self.job, Some((JobKind::Translating, _)));
+        let labels: Vec<String> = self.languages.iter().map(Language::label).collect();
+        let mut index = self.languages.iter().position(|l| l.code == self.settings.language).unwrap_or(0);
+        // In another language, the label also says "Language" in English, so
+        // anyone who chose a language by mistake can find their way back.
+        let mut label = t("language.label");
+        if self.settings.language != i18n::ENGLISH_CODE {
+            label = format!("{label} (Language)");
+        }
+        if dropdown(ui, "language", &label, &labels, &mut index, !translating) {
+            self.choose_language(index);
+        }
+        let language = self.current_language();
+        if language.code == i18n::ENGLISH_CODE {
+            return;
+        }
+        let (models, shown) = self.model_choices();
+        let chosen = self.translation_model();
+        let mut mindex = models.iter().position(|m| Some(m) == chosen.as_ref()).unwrap_or(0);
+        if dropdown(ui, "translation_model", &t("language.model"), &shown, &mut mindex, !models.is_empty() && !translating) {
+            self.settings.translation_model = models[mindex].clone();
+            self.settings.save();
+        }
+        let button = tf("language.translate", &[("language", &language.label())]);
+        if full_button(ui, &button, !self.is_busy()).clicked() {
+            self.translate_app();
+        }
+        ui.label(tf("language.note", &[("folder", &crate::paths::languages_dir().display())]));
+        ui.add_space(8.0);
+    }
+
     fn wordlists_tab(&mut self, ui: &mut Ui) {
-        heading(ui, "Wordlists");
-        ui.label(
-            "Wordlists change how words are spoken, for example to fix pronunciation or to keep \
-             reading classroom-safe. Ticked wordlists are used when reading aloud and saving audio.",
-        );
-        if full_button(ui, "Import a wordlist… (XML)", true).clicked() {
+        heading(ui, &t("wordlists.heading"));
+        ui.label(t("wordlists.intro"));
+        if full_button(ui, &t("wordlists.import"), true).clicked() {
             self.import_wordlist();
         }
-        if full_button(ui, "Reload wordlists", true).clicked() {
+        if full_button(ui, &t("wordlists.reload"), true).clicked() {
             self.reload_wordlists();
-            self.announce(format!("{} wordlist(s) installed.", self.wordlists.len()));
+            self.announce(tf("wordlists.count", &[("count", &self.wordlists.len())]));
         }
 
         ui.add_space(8.0);
-        heading(ui, "Installed wordlists");
+        heading(ui, &t("wordlists.installed"));
         if self.wordlists.is_empty() {
-            ui.label("No wordlists are installed.");
+            ui.label(t("wordlists.none"));
         }
         let mut toggled = None;
         for item in &self.wordlists {
             match &item.list {
                 Ok(list) => {
                     let mut enabled = !self.settings.disabled_wordlists.contains(&item.file_name);
-                    let text = format!(
-                        "{} – {} ({} entries)",
-                        list.name,
-                        if list.description.is_empty() { &item.file_name } else { &list.description },
-                        list.entries.len()
+                    let description = if list.description.is_empty() { &item.file_name } else { &list.description };
+                    let text = tf(
+                        "wordlists.item",
+                        &[("name", &list.name), ("description", description), ("count", &list.entries.len())],
                     );
                     let resp = ui.add_sized(
                         [ui.available_width(), CONTROL_HEIGHT],
@@ -1201,7 +1359,8 @@ impl SpeechApp {
                     }
                 }
                 Err(e) => {
-                    ui.label(RichText::new(format!("{} could not be read: {e}", item.file_name)).color(error_color(ui)));
+                    let text = tf("wordlists.unreadable", &[("file", &item.file_name), ("error", e)]);
+                    ui.label(RichText::new(text).color(error_color(ui)));
                 }
             }
         }
@@ -1212,17 +1371,18 @@ impl SpeechApp {
                 self.settings.disabled_wordlists.insert(file);
             }
             self.settings.save();
-            self.announce(format!("{name} {}.", if enabled { "enabled" } else { "disabled" }));
+            let key = if enabled { "wordlists.enabled" } else { "wordlists.disabled" };
+            self.announce(tf(key, &[("name", &name)]));
         }
 
         if !self.wordlists.is_empty() {
             ui.add_space(8.0);
             let names: Vec<String> = self.wordlists.iter().map(display_name).collect();
             let mut index = self.wordlist_to_remove;
-            if dropdown(ui, "remove_wordlist", "Wordlist to remove", &names, &mut index, true) {
+            if dropdown(ui, "remove_wordlist", &t("wordlists.to_remove"), &names, &mut index, true) {
                 self.wordlist_to_remove = index;
             }
-            if full_button(ui, "Remove the selected wordlist…", true).clicked() {
+            if full_button(ui, &t("wordlists.remove"), true).clicked() {
                 self.remove_wordlist();
             }
         }
@@ -1232,22 +1392,19 @@ impl SpeechApp {
     /// files. Screen readers get it as a progress indicator named "Progress",
     /// with a percentage value.
     fn progress_bar(&self, ui: &mut Ui) {
-        let (fraction, text) = match &self.job {
-            Some((JobKind::Speaking, _)) => {
-                let state = if self.paused { "Paused" } else { "Reading aloud" };
-                (Some(self.progress), format!("{state}: {:.0}%", self.progress * 100.0))
-            }
-            Some((JobKind::Previewing, _)) => (Some(self.progress), "Previewing the voice".to_owned()),
-            Some((JobKind::Saving, _)) => {
-                (Some(self.progress), format!("Saving audio: {:.0}%", self.progress * 100.0))
-            }
-            Some((JobKind::Downloading, _)) => {
-                (Some(self.progress), format!("Downloading the AI model: {:.0}%", self.progress * 100.0))
-            }
-            None if self.setting_up_ollama => (None, "Setting up Ollama…".to_owned()),
-            None if self.loading_file => (None, "Opening the file…".to_owned()),
-            None => (Some(0.0), "Nothing playing".to_owned()),
+        let percent = format!("{:.0}", self.progress * 100.0);
+        let (fraction, key) = match &self.job {
+            Some((JobKind::Speaking, _)) if self.paused => (Some(self.progress), "bar.paused"),
+            Some((JobKind::Speaking, _)) => (Some(self.progress), "bar.reading"),
+            Some((JobKind::Previewing, _)) => (Some(self.progress), "bar.previewing"),
+            Some((JobKind::Saving, _)) => (Some(self.progress), "bar.saving"),
+            Some((JobKind::Downloading, _)) => (Some(self.progress), "bar.downloading"),
+            Some((JobKind::Translating, _)) => (Some(self.progress), "bar.translating"),
+            None if self.setting_up_ollama => (None, "bar.setting_up"),
+            None if self.loading_file => (None, "bar.opening"),
+            None => (Some(0.0), "bar.nothing"),
         };
+        let text = tf(key, &[("percent", &percent)]);
         let bar = egui::ProgressBar::new(fraction.unwrap_or(0.0))
             .desired_width(ui.available_width())
             .desired_height(24.0)
@@ -1266,7 +1423,7 @@ impl SpeechApp {
         let pos = resp.rect.center() - galley.size() / 2.0;
         ui.painter().with_clip_rect(resp.rect).galley(pos, galley, colour);
         ui.ctx().accesskit_node_builder(resp.id, |node| {
-            node.set_label("Progress");
+            node.set_label(t("bar.label"));
             node.set_value(text);
             if let Some(f) = fraction {
                 node.set_min_numeric_value(0.0);
@@ -1498,7 +1655,18 @@ fn draw_focus_ring(ctx: &egui::Context) {
 }
 
 fn file_name(path: &std::path::Path) -> String {
-    path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| "the file".into())
+    path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| t("file.fallback_name"))
+}
+
+/// The suggested model's download size, such as "about 3.3 GB".
+fn model_size() -> String {
+    tf("model.size", &[("size", &crate::vision::SUGGESTED_MODEL_SIZE)])
+}
+
+/// A voice's name in the list. The default system voice is named by the app,
+/// so it follows the interface language.
+fn voice_name(voice: &Voice) -> String {
+    if voice.id.is_empty() { t("voice.default") } else { voice.name.clone() }
 }
 
 fn display_name(item: &Installed) -> String {

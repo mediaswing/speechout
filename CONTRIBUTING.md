@@ -94,6 +94,13 @@ Status messages, labels, the README and the changelog are written for the
 people who use the app, in plain British English. Prefer short sentences and
 everyday words, and avoid jargon. The same goes for code comments.
 
+Every label and message the app shows lives in the `ENGLISH` list in
+`src/i18n.rs`, under a key, so that it can be translated. Use `t("key")` or
+`tf("key", &[("name", &value)])` rather than writing the text in place, and
+write values as `{name}` rather than building sentences from pieces, since
+word order differs between languages. A test checks that every key used in
+the code has English text.
+
 ### 6. Few dependencies
 
 Add a new crate only when it's clearly worth it, and turn off the features you

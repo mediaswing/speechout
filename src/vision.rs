@@ -74,7 +74,8 @@ pub fn list_models() -> anyhow::Result<Vec<String>> {
 /// The model offered for download when Ollama has none that understands
 /// images: small enough for most computers, and good at reading text in photos.
 pub const SUGGESTED_MODEL: &str = "gemma3:4b";
-pub const SUGGESTED_MODEL_SIZE: &str = "about 3.3 GB";
+/// Shown as "about 3.3 GB".
+pub const SUGGESTED_MODEL_SIZE: &str = "3.3 GB";
 
 /// Downloads a model into Ollama, calling `progress` with the fraction done.
 /// Returns `Ok(false)` if `stopped` became true first. Ollama keeps what was
@@ -191,6 +192,42 @@ fn prepare_image(path: &Path) -> anyhow::Result<Vec<u8>> {
         img = img.resize(MAX_EDGE, MAX_EDGE, image::imageops::FilterType::Triangle);
     }
     encode_jpeg(&img)
+}
+
+/// Sends a text prompt to an Ollama model and returns its answer. `format`
+/// asks for a particular kind of reply, such as `"json"`.
+pub fn generate(model: &str, prompt: &str, format: Option<Value>) -> anyhow::Result<String> {
+    let mut request = json!({
+        "model": model,
+        "prompt": prompt,
+        "stream": false,
+        // Keep answers steady, so the same text gets the same translation.
+        // Ollama's default context can be as small as 2,048 tokens, which
+        // a batch of text and its translation can overflow, cutting the
+        // answer short.
+        "options": { "temperature": 0.1, "num_ctx": 8192 },
+    });
+    if let Some(format) = format {
+        request["format"] = format;
+    }
+    // Ollama explains a failure, such as a model it can't load, in the reply.
+    let body: Value = local_agent()
+        .post(&format!("{OLLAMA_URL}/api/generate"))
+        .config()
+        .http_status_as_error(false)
+        .build()
+        .send_json(request)
+        .context("the local AI model did not answer. Check that Ollama is running.")?
+        .body_mut()
+        .read_json()
+        .context("Ollama sent an unexpected reply")?;
+    if let Some(error) = body["error"].as_str() {
+        bail!("Ollama could not use the model {model}: {error}");
+    }
+    match body["response"].as_str() {
+        Some(text) if !text.trim().is_empty() => Ok(text.to_owned()),
+        _ => bail!("the local AI model gave an empty answer"),
+    }
 }
 
 /// Removes markdown that would otherwise be read out as symbols.

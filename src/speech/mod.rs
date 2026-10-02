@@ -3,6 +3,7 @@
 mod cloud;
 pub mod retry;
 
+use crate::i18n::{t, tf};
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -99,10 +100,20 @@ impl Provider {
 
     /// One sentence saying where the speech is made, for the General tab.
     /// It states only what the app does, not what the service does with it.
+    /// The service's name as shown in the window, in the interface language.
+    /// `label` stays in English for the debug log and error messages.
+    pub fn name(self) -> String {
+        match self {
+            Provider::System => t("service.system"),
+            Provider::OpenAi => t("service.openai"),
+            _ => self.label().to_owned(),
+        }
+    }
+
     pub fn privacy_note(self) -> String {
         match self {
-            Provider::System => "Speech is made on this computer.".to_owned(),
-            _ => format!("Your text is sent to {} to make the speech.", self.label()),
+            Provider::System => t("service.local_note"),
+            _ => tf("service.cloud_note", &[("service", &self.name())]),
         }
     }
 
@@ -134,11 +145,13 @@ impl Provider {
 
 /// How a speed is shown in the speed list and read by screen readers.
 pub fn speed_label(speed: f32) -> String {
+    let speed_text = format!("{speed:.1}");
     if speed == 1.0 {
-        "Normal speed".to_owned()
+        t("speed.normal")
+    } else if speed < 1.0 {
+        tf("speed.slower", &[("speed", &speed_text)])
     } else {
-        let pace = if speed < 1.0 { "slower" } else { "faster" };
-        format!("{speed:.1} times normal speed ({pace})")
+        tf("speed.faster", &[("speed", &speed_text)])
     }
 }
 

@@ -21,6 +21,11 @@ pub fn wordlist_dir() -> PathBuf {
     config_dir().join("wordlists")
 }
 
+/// Translations of the interface, one JSON file per language.
+pub fn languages_dir() -> PathBuf {
+    config_dir().join("languages")
+}
+
 pub fn default_log_dir() -> PathBuf {
     dirs::data_local_dir().unwrap_or_else(std::env::temp_dir).join(APP_DIR).join("logs")
 }

@@ -50,6 +50,27 @@ automatically.
 
 ### Settings
 
+- **Language of the app**: English, or one of about 30 other languages,
+  including Welsh, Irish, French, German, Spanish, Polish and Ukrainian. The
+  app is translated on your computer by a local AI model in Ollama, the same
+  way photos are described. Choose a language, then press **Translate the app
+  into…**; it takes a few minutes, shows on the progress bar, and Escape stops
+  it. Choose a **Translation model** if you'd rather not use the image
+  description model. When you choose a language that's already been
+  translated, the app switches straight away. The label of this list always
+  says "(Language)" in English too, so you can find your way back.
+
+  Translations by a small AI model can contain mistakes. Each one is saved as
+  a JSON file in the `languages` folder next to your settings, where you can
+  correct it, or share it with others. Text the translation leaves out is
+  shown in English, and pressing the button again fills it in. A translation
+  file for a language that isn't in the list, such as `eo.json` for
+  Esperanto, is offered as well, using the `language` name inside it.
+
+  Languages that use other alphabets, such as Arabic, Hindi or Chinese, aren't
+  offered yet, because the window can't draw them. Only the app's own text
+  is translated: documents are read as they are, and the voice preview and
+  part announcements stay in English.
 - **Image description model**: choose which Ollama model describes photos.
   It needs a model that understands images, such as `llama3.2-vision`,
   `gemma3` or `llava`. If Ollama has none, a button downloads `gemma3:4b`
@@ -114,6 +135,9 @@ them, so don't save keys on a shared account.
   hear, so stopping early sends less.
 - Photos are sent only to Ollama on your own computer (`127.0.0.1:11434`),
   after they have been shrunk and had their metadata removed.
+- When you translate the app, its own labels and messages are sent to Ollama
+  on your computer. Nothing is sent over the internet, and your documents
+  aren't involved.
 - With photo location turned on, the photo's GPS coordinates, rounded to about
   11 metres, are sent to OpenStreetMap's Nominatim service. The photo itself is
   not sent.
@@ -243,6 +267,7 @@ src/audio.rs          Decoding, playback, WAV and MP3 export
 src/document.rs       PDF, TXT, DOCX and CSV text extraction
 src/vision.rs         Photo descriptions, GPS and place names
 src/wordlist.rs       Wordlist parsing and substitution
+src/i18n.rs           The app's text in English, and translations of it
 src/spoken.rs         Email addresses, dates and numbers put the way they are said
 src/secrets.rs        API key storage
 src/settings.rs       Saved settings
