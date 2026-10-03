@@ -108,6 +108,32 @@ Add a new crate only when it's clearly worth it, and turn off the features you
 don't need. Smaller dependency trees build faster on all three platforms and
 are easier to keep secure.
 
+## Using AI tools
+
+You're welcome to use AI tools to help you write code, tests or
+documentation. Parts of this project were written with them. But you are
+responsible for what you submit, however it was made, so before you open a
+pull request:
+
+- **Make sure it works.** Build it, run the tests, and then use the app to try
+  the change yourself. Passing tests aren't enough on their own: check that it
+  does what you expect, from the keyboard and, if you can, with a screen
+  reader.
+- **Read every line.** You should understand the change well enough to explain
+  it and answer questions about it. If you can't say why a line is there, find
+  out or take it out.
+- **Check the claims.** AI tools can invent functions, crate features and
+  facts that sound right but aren't. Check anything you didn't already know,
+  including the wording of README and changelog entries.
+- **Keep it focused.** Submit the change you meant to make, not everything
+  the tool tidied up along the way. Large, unreviewed rewrites won't be
+  merged.
+- **Say so.** Mention in the pull request that you used an AI tool, and
+  describe how you tested the result.
+
+The same goes for bug and security reports: please make sure what you report
+really happens before you send it.
+
 ## Making a change
 
 1. Fork the repository and create a branch for your change.
