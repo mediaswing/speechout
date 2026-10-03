@@ -18,6 +18,10 @@ The program file is called `speechout`.
   Ollama isn't installed when you choose a photo, the app offers to install it
   with winget (Windows), Homebrew (macOS) or Snap (Linux), or to start it if it
   is installed but not running.
+- **Plays WAV and MP3 files and transcribes speech in them.** The app listens
+  to the waveform, and if the file is mostly spoken word, it writes down what
+  is said using [Whisper](https://github.com/openai/whisper), an AI model that
+  runs on your computer, so the audio never leaves it.
 - **Says where a photo was taken**, if you turn this on and the photo has GPS
   information. The place name is looked up with OpenStreetMap.
 - **Applies wordlists** that fix pronunciation (for example "Leicester" →
@@ -26,8 +30,8 @@ The program file is called `speechout`.
 
 ## The window
 
-The window has three tabs across the top: **General**, **Settings** and
-**Wordlists**. Every button, box and dropdown sits on its own line and fills the
+The window has four tabs across the top: **General**, **Settings**,
+**Wordlists** and **Audio player**. Every button, box and dropdown sits on its own line and fills the
 width of the window. At the bottom, a progress bar shows how far through
 reading aloud or saving audio you are, and a status line below it reports what
 is happening and any errors. Screen readers announce the status line
@@ -47,6 +51,33 @@ automatically.
 | Audio file format | MP3 or WAV. |
 | Save spoken text as audio… | Renders the whole text to a file. |
 | Copy text to the clipboard | Copies the document's text, or the photo's description, so you can read or paste it elsewhere. |
+
+### Audio player
+
+| Control | What it does |
+| --- | --- |
+| Current file | Shows the audio file you chose. |
+| Choose an audio file… | Opens a WAV or MP3 file. The app says how long it is and whether it sounds like speech, music or silence. A long file takes a moment to open; Escape or Stop cancels it. |
+| Waveform | A picture of the sound, with the part already played highlighted. Screen readers read its length and what it sounds like. |
+| Play / Pause / Stop | Controls playback. Play carries on from where you paused or moved to. |
+| Back 10 seconds / Forward 10 seconds | Moves through the file, and says the new position. |
+| Transcribe the speech | Writes down what is said. This happens by itself when a file sounds like speech; press this to try a file that didn't, or to transcribe again with a different model. While transcribing, it becomes **Stop transcribing**. |
+| Transcript text | The words, in paragraphs, which start after a long pause. You can review it with a screen reader. |
+| Copy the transcript to the clipboard / Save the transcript as a text file… | Takes the transcript elsewhere. |
+
+To decide whether a file is speech, the app looks at each second of sound.
+Speech rises and falls with each syllable and has short gaps between words,
+and it mixes vowels with hissy sounds such as "s" and "f"; music and most
+other sounds don't. A file is transcribed by itself when most of its seconds
+look like speech. Songs and music with talking over it may not be, so press
+**Transcribe the speech** if you want to try.
+
+The first time anything is transcribed, the app asks to download the Whisper
+model from Hugging Face. It is downloaded once and kept on your computer.
+Transcribing a few minutes of speech takes seconds on most computers; longer
+files take longer, and the progress bar and F7 say how far it has got. Whisper
+works out which language is spoken by itself. Only the first three hours of a
+very long file can be transcribed, though all of it plays.
 
 ### Settings
 
@@ -80,6 +111,12 @@ automatically.
   (about 3.3 GB), and choosing a photo offers the same. Escape stops the
   download, and the next one carries on where it left off.
 - **Photo location**: whether to read out where a geotagged photo was taken.
+- **Speech recognition model (Whisper)**: the model the Audio player tab
+  transcribes with. **Whisper base** (about 150 MB) is quick and good with
+  clear speech. **Whisper small** (about 490 MB) is slower, but better with
+  accents, background noise and languages other than English. Each is
+  downloaded the first time it's needed, and the list says which you already
+  have.
 - **Long texts**: text over 4,800 characters is read in parts. Choose whether
   each part starts with "This is part 1 of 3", or the parts run on with no
   announcement, with only the usual short pause between sentences.
@@ -104,14 +141,14 @@ wordlists, or remove ones you no longer need.
 | Tab / Shift+Tab | Move between controls |
 | Space or Enter | Press a button, tick a box or open a dropdown |
 | Up / Down / Home / End | Change the choice in a focused dropdown without opening it |
-| Ctrl+1, Ctrl+2, Ctrl+3 | Go to the General, Settings or Wordlists tab |
+| Ctrl+1, Ctrl+2, Ctrl+3, Ctrl+4 | Go to the General, Settings, Wordlists or Audio player tab |
 | Ctrl+Tab / Ctrl+Shift+Tab | Next or previous tab |
-| Ctrl+O | Choose a file |
-| F5 | Read aloud |
-| F6 | Pause or resume |
-| F7 | Hear how far through reading or saving you are |
-| Escape | Stop reading, or cancel saving |
-| Ctrl+S | Save the spoken text as audio |
+| Ctrl+O | Choose a file (an audio file on the Audio player tab) |
+| F5 | Read aloud (play the audio file on the Audio player tab) |
+| F6 | Pause or resume. While an audio file is playing, pauses or resumes it |
+| F7 | Hear how far through reading or saving you are. While an audio file is playing, hear the time, such as "1 minute 5 seconds of 3 minutes" |
+| Escape | Stop reading, cancel saving, or stop transcribing. While an audio file is playing or being opened, stops it |
+| Ctrl+S | Save the spoken text as audio (save the transcript on the Audio player tab) |
 | Ctrl+Plus / Ctrl+Minus / Ctrl+0 | Make everything larger, smaller, or reset the size |
 
 On a Mac, use Command instead of Ctrl, except for Ctrl+Tab.
@@ -140,6 +177,10 @@ them, so don't save keys on a shared account.
   hear, so stopping early sends less.
 - Photos are sent only to Ollama on your own computer (`127.0.0.1:11434`),
   after they have been shrunk and had their metadata removed.
+- Audio files are played and transcribed on your computer, and are never sent
+  anywhere. The first time you transcribe, and only if you agree, the Whisper
+  model is downloaded from Hugging Face (`huggingface.co`). Nothing about you
+  or your files is sent with that request.
 - When you translate the app, its own labels and messages are sent to Ollama
   on your computer. Nothing is sent over the internet, and your documents
   aren't involved.
@@ -208,12 +249,22 @@ You need the current stable Rust toolchain.
 cargo build --release
 ```
 
+Speech recognition is built from [whisper.cpp](https://github.com/ggml-org/whisper.cpp),
+so you also need [CMake](https://cmake.org) and a C++ compiler: Visual Studio
+on Windows, the Xcode command line tools on macOS, or `g++` on Linux.
+
 On Ubuntu, install the build dependencies first:
 
 ```
 sudo apt install pkg-config libasound2-dev libxkbcommon-dev libwayland-dev \
-  libgl1-mesa-dev libx11-dev libxcursor-dev libxrandr-dev libxi-dev
+  libgl1-mesa-dev libx11-dev libxcursor-dev libxrandr-dev libxi-dev cmake g++
 ```
+
+By default, whisper.cpp is tuned for the processor of the computer that builds
+it, so the app may not transcribe on older computers. Set `GGML_NATIVE=OFF`
+when building copies for other people, as the release workflow does. Built
+like this, PCs need a processor with AVX2 to transcribe. Most PCs from the
+last ten years have it, though some low-cost Pentium and Celeron ones don't.
 
 Run the tests with `cargo test`. Tests that use your computer's real speech
 synthesiser are skipped by default; run them with `cargo test -- --ignored`.
@@ -268,9 +319,10 @@ src/main.rs           Command line and start-up
 src/app.rs            The window, tabs and keyboard handling
 src/worker.rs         Background jobs (speaking, saving, loading)
 src/speech/           System and cloud voices
-src/audio.rs          Decoding, playback, WAV and MP3 export
+src/audio.rs          Decoding, playback, WAV and MP3 export, and the speech check
 src/document.rs       PDF, TXT, DOCX and CSV text extraction
 src/vision.rs         Photo descriptions, GPS and place names
+src/transcribe.rs     Speech recognition with Whisper, and downloading its models
 src/wordlist.rs       Wordlist parsing and substitution
 src/i18n.rs           The app's text in English, and translations of it
 src/spoken.rs         Email addresses, dates and numbers put the way they are said
@@ -290,6 +342,10 @@ The Speech Output Engine is free software, released under the
 The interface uses Google Sans: Medium for body text and Bold for the tabs.
 The fonts are built into the app and are licensed under the
 [SIL Open Font License 1.1](assets/fonts/OFL.txt).
+
+Speech recognition uses [whisper.cpp](https://github.com/ggml-org/whisper.cpp),
+which is built into the app and is licensed under the MIT License. The Whisper
+models it downloads are released by OpenAI under the MIT License.
 
 The Windows download includes [libheif](https://github.com/strukturag/libheif)
 and [libde265](https://github.com/strukturag/libde265), which read HEIC photos.

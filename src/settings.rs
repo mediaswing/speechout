@@ -3,6 +3,7 @@
 
 use crate::audio::AudioFormat;
 use crate::speech::Provider;
+use crate::transcribe::WhisperModel;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
@@ -32,6 +33,8 @@ pub struct Settings {
     /// Ollama model used to translate the interface. Empty means the image
     /// description model.
     pub translation_model: String,
+    /// Whisper model used to transcribe speech on the Audio player tab.
+    pub whisper_model: WhisperModel,
 }
 
 impl Default for Settings {
@@ -50,6 +53,7 @@ impl Default for Settings {
             announce_parts: false,
             language: crate::i18n::ENGLISH_CODE.to_owned(),
             translation_model: String::new(),
+            whisper_model: WhisperModel::Base,
         }
     }
 }

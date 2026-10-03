@@ -197,7 +197,7 @@ pub fn secret_delete(_name: &str) -> SecretStore<()> {
     SecretStore::Unsupported
 }
 
-const DEB_DEPENDS: &str = "libc6 (>= 2.35), libgcc-s1, libasound2t64 | libasound2, \
+const DEB_DEPENDS: &str = "libc6 (>= 2.35), libgcc-s1, libstdc++6, libasound2t64 | libasound2, \
 libgl1, libxkbcommon0, libxkbcommon-x11-0, libwayland-client0, espeak-ng";
 const DEB_RECOMMENDS: &str = "libheif-examples, xdg-desktop-portal, at-spi2-core, orca";
 
@@ -328,7 +328,8 @@ pub fn package(out_dir: &Path) -> anyhow::Result<PathBuf> {
          Homepage: https://github.com/mediaswing/speechout\n\
          Description: Speech Output Engine, an accessible text-to-speech reader\n \
          Reads PDF, TXT, DOCX and CSV files aloud with system or cloud voices, saves\n \
-         speech as WAV or MP3, describes photos with a local AI model and applies\n \
+         speech as WAV or MP3, describes photos with a local AI model, plays WAV and\n \
+         MP3 files and transcribes the speech in them with Whisper, and applies\n \
          XML pronunciation wordlists. Fully usable by keyboard and screen reader.\n",
         arch = deb_arch()
     );

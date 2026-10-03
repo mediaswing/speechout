@@ -6,6 +6,7 @@ use crate::audio::{self, AudioFormat, Playback};
 use crate::i18n::{self, Language, Translation, t, tf};
 use crate::speech::retry::{self, Kind};
 use crate::speech::{self, Provider, Voice};
+use crate::transcribe::WhisperModel;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::Sender;
@@ -22,6 +23,17 @@ pub enum Msg {
     OllamaReady(Result<(), String>),
     /// Translating the interface finished or was stopped.
     Translated(Result<Translated, String>),
+    /// An audio file for the Audio player tab was decoded and checked:
+    /// `None` if opening it was stopped.
+    AudioLoaded(PathBuf, Result<Option<Arc<audio::Listened>>, String>),
+    /// How far into the audio file playback is.
+    AudioPosition(Duration),
+    /// Playing an audio file ended: true if it reached the end.
+    AudioEnded(Result<bool, String>),
+    /// Downloading a Whisper model finished: true if complete, false if stopped.
+    WhisperDownloaded(WhisperModel, Result<bool, String>),
+    /// Transcribing an audio file finished: `None` if it was stopped.
+    Transcribed(PathBuf, Result<Option<String>, String>),
     /// Result of an update check; `bool` is true when the user asked for it.
     Update(Result<Option<crate::update::Release>, String>, bool),
     /// Progress worth announcing.
@@ -76,6 +88,8 @@ pub struct Control {
     stop: AtomicBool,
     paused: AtomicBool,
     player: Mutex<Option<Arc<rodio::Player>>>,
+    /// Where to move to in an audio file being played.
+    seek: Mutex<Option<Duration>>,
 }
 
 impl Control {
@@ -99,6 +113,17 @@ impl Control {
 
     pub fn is_paused(&self) -> bool {
         self.paused.load(Ordering::SeqCst)
+    }
+
+    /// Asks the audio file player to move to `position`.
+    pub fn seek(&self, position: Duration) {
+        if let Ok(mut seek) = self.seek.lock() {
+            *seek = Some(position);
+        }
+    }
+
+    fn take_seek(&self) -> Option<Duration> {
+        self.seek.lock().ok().and_then(|mut s| s.take())
     }
 
     /// Waits for `delay`, calling `tick` every tenth of a second. Returns
@@ -361,6 +386,123 @@ pub fn save(rep: Reporter, control: Arc<Control>, job: SpeechJob, path: PathBuf,
         }
         Err(e) => rep.send(Msg::Failed(err(e))),
     }
+}
+
+/// Announces a long job's progress in quarters ("25% done"), and moves the
+/// progress bar in steps of half a percent, so neither the screen reader nor
+/// the window is flooded.
+struct Quarters {
+    key: &'static str,
+    last_sent: f32,
+    announced: usize,
+}
+
+impl Quarters {
+    fn new(rep: &Reporter, key: &'static str) -> Self {
+        rep.send(Msg::Progress(0.0));
+        Self { key, last_sent: 0.0, announced: 0 }
+    }
+
+    fn report(&mut self, rep: &Reporter, fraction: f32) {
+        if (fraction - self.last_sent).abs() >= 0.005 {
+            self.last_sent = fraction;
+            rep.send(Msg::Progress(fraction));
+        }
+        let quarter = (fraction * 4.0) as usize;
+        if quarter > self.announced && quarter < 4 {
+            self.announced = quarter;
+            rep.send(Msg::Status(tf(self.key, &[("percent", &(quarter * 25))])));
+        }
+    }
+}
+
+/// Decodes an audio file for the Audio player tab and checks whether it
+/// sounds like speech. Escape stops it.
+pub fn load_audio(rep: Reporter, control: Arc<Control>, path: PathBuf) {
+    let result = audio::listen(&path, || control.is_stopped()).map(|a| a.map(Arc::new)).map_err(err);
+    rep.send(Msg::AudioLoaded(path, result));
+}
+
+/// Plays an audio file from `start`, reporting the position as it goes.
+/// The control pauses, moves and stops it.
+pub fn play_audio(rep: Reporter, control: Arc<Control>, path: PathBuf, start: Duration) {
+    use anyhow::Context;
+    let result = (|| {
+        let playback = Playback::open()?;
+        let file = std::fs::File::open(&path).with_context(|| format!("could not open {}", path.display()))?;
+        let decoder = rodio::Decoder::try_from(file).context("the audio could not be decoded")?;
+        let player = playback.handle();
+        player.append(decoder);
+        if let Ok(mut slot) = control.player.lock() {
+            *slot = Some(player.clone());
+        }
+        // Apply a pause pressed before the audio device was ready.
+        control.set_paused(control.is_paused());
+        if !start.is_zero() {
+            control.seek(start);
+        }
+        let mut last_sent = None;
+        // A move waits until the sound system makes it, which is for ever if
+        // the output device has gone, so it happens on a thread of its own and
+        // Stop always works. One move at a time, so they happen in order.
+        let mut moving: Option<std::thread::JoinHandle<()>> = None;
+        loop {
+            if control.is_stopped() {
+                return Ok(false);
+            }
+            if player.empty() {
+                return Ok(true);
+            }
+            if moving.as_ref().is_some_and(|m| m.is_finished()) {
+                moving = None;
+            }
+            if moving.is_none()
+                && let Some(position) = control.take_seek()
+            {
+                let player = player.clone();
+                moving = Some(std::thread::spawn(move || {
+                    if let Err(e) = player.try_seek(position) {
+                        log::warn!("could not move to {position:?} in the audio: {e}");
+                    }
+                }));
+            }
+            // Until a move is made, the position is still the old one.
+            let position = player.get_pos();
+            if moving.is_none() && last_sent != Some(position) {
+                last_sent = Some(position);
+                rep.send(Msg::AudioPosition(position));
+            }
+            std::thread::sleep(Duration::from_millis(100));
+        }
+    })();
+    rep.send(Msg::AudioEnded(result.map_err(err)));
+}
+
+/// Downloads a Whisper model, moving the progress bar and announcing each
+/// quarter. Escape stops it.
+pub fn download_whisper(rep: Reporter, control: Arc<Control>, model: WhisperModel) {
+    let mut quarters = Quarters::new(&rep, "model.download_progress");
+    let result = crate::transcribe::download(model, |f| quarters.report(&rep, f), || control.is_stopped());
+    rep.send(Msg::WhisperDownloaded(model, result.map_err(err)));
+}
+
+/// Transcribes the speech in an audio file. Escape stops it.
+pub fn transcribe(
+    rep: Reporter,
+    control: Arc<Control>,
+    model: WhisperModel,
+    path: PathBuf,
+    audio: Arc<audio::Listened>,
+) {
+    let progress_rep = rep.clone();
+    let mut quarters = Quarters::new(&rep, "transcript.progress");
+    let result = crate::transcribe::transcribe(
+        model,
+        &audio.pcm.samples,
+        move |percent| quarters.report(&progress_rep, percent as f32 / 100.0),
+        move || control.is_stopped(),
+    );
+    rep.send(Msg::Transcribed(path, result.map_err(err)));
 }
 
 /// What a translation job made.

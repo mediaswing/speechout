@@ -23,6 +23,10 @@ permissions:
 
 env:
   CARGO_TERM_COLOR: always
+  # Build whisper.cpp (speech recognition) for the processor features most
+  # computers have (AVX2 on PCs), not for the build machine's own processor,
+  # which may have features that users' computers lack.
+  GGML_NATIVE: "OFF"
 
 jobs:
   windows:

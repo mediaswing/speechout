@@ -10,6 +10,19 @@ the app.
 
 ## [Unreleased]
 
+### Added
+
+- A new **Audio player** tab plays WAV and MP3 files. Play, Pause, Stop, and
+  Back and Forward 10 seconds work from the keyboard, F7 says how far through
+  you are, and a waveform shows the sound.
+- When an audio file is mostly speech, the app writes down what is said, using
+  Whisper, an AI model that runs on your computer, so the audio isn't sent
+  anywhere. The app tells speech from music by itself, and you can transcribe
+  any file with the "Transcribe the speech" button. The transcript can be
+  copied or saved as a text file. The first time, the app asks to download the
+  Whisper model (about 150 MB). A larger, more accurate model can be chosen on
+  the Settings tab.
+
 ## [1.8.0] - 2026-10-03
 
 ### Added

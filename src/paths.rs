@@ -26,6 +26,12 @@ pub fn languages_dir() -> PathBuf {
     config_dir().join("languages")
 }
 
+/// Whisper speech recognition models. They are large, so they go with other
+/// local data rather than with the settings, which may be backed up.
+pub fn whisper_dir() -> PathBuf {
+    dirs::data_local_dir().unwrap_or_else(std::env::temp_dir).join(APP_DIR).join("whisper")
+}
+
 pub fn default_log_dir() -> PathBuf {
     dirs::data_local_dir().unwrap_or_else(std::env::temp_dir).join(APP_DIR).join("logs")
 }

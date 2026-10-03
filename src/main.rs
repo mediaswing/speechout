@@ -14,6 +14,7 @@ mod secrets;
 mod settings;
 mod speech;
 mod spoken;
+mod transcribe;
 mod update;
 mod vision;
 mod wordlist;

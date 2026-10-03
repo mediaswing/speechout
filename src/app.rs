@@ -1,5 +1,5 @@
-//! The window: three tabs (General, Settings, Wordlists) with every control
-//! on its own full-width line.
+//! The window: four tabs (General, Settings, Wordlists, Audio player) with
+//! every control on its own full-width line.
 //!
 //! Accessibility notes:
 //! * egui publishes the interface to screen readers through AccessKit
@@ -12,10 +12,11 @@
 //!   dropdown, and the shortcuts below work from anywhere.
 //! * A thick focus ring is drawn around whichever control has focus.
 
-use crate::audio::AudioFormat;
+use crate::audio::{AudioFormat, Listened, SoundKind};
 use crate::i18n::{self, Language, Translation, t, tf};
 use crate::settings::Settings;
 use crate::speech::{self, Provider, Voice};
+use crate::transcribe::WhisperModel;
 use crate::wordlist::{self, Installed, Substitutions};
 use crate::worker::{self, Control, Msg, Reporter, SpeechJob};
 use egui::accesskit::{Live, Role};
@@ -24,6 +25,7 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::mpsc::{Receiver, channel};
+use std::time::Duration;
 
 pub const APP_TITLE: &str = "Speech Output Engine";
 
@@ -44,16 +46,18 @@ enum Tab {
     General,
     Settings,
     Wordlists,
+    Player,
 }
 
 impl Tab {
-    const ALL: [Tab; 3] = [Tab::General, Tab::Settings, Tab::Wordlists];
+    const ALL: [Tab; 4] = [Tab::General, Tab::Settings, Tab::Wordlists, Tab::Player];
 
     fn label(self) -> String {
         match self {
             Tab::General => t("tab.general"),
             Tab::Settings => t("tab.settings"),
             Tab::Wordlists => t("tab.wordlists"),
+            Tab::Player => t("tab.player"),
         }
     }
 
@@ -78,6 +82,8 @@ enum JobKind {
     Downloading,
     /// Translating the interface with an AI model.
     Translating,
+    /// Turning the speech in an audio file into text with Whisper.
+    Transcribing,
 }
 
 pub struct SpeechApp {
@@ -111,6 +117,17 @@ pub struct SpeechApp {
     /// Languages offered on the Settings tab.
     languages: Vec<Language>,
     focus: Option<Id>,
+    /// The file on the Audio player tab.
+    audio: Option<(PathBuf, Arc<Listened>)>,
+    /// Stops the audio file being opened.
+    audio_loader: Option<Arc<Control>>,
+    transcript: String,
+    /// Controls the audio file while it is playing or paused.
+    audio_player: Option<Arc<Control>>,
+    audio_paused: bool,
+    audio_position: Duration,
+    /// Transcribe the audio file once the Whisper model has downloaded.
+    transcribe_after_download: bool,
 }
 
 impl SpeechApp {
@@ -160,6 +177,13 @@ impl SpeechApp {
             wordlist_to_remove: 0,
             languages: i18n::available(&crate::paths::languages_dir()),
             focus: Some(Tab::General.id()),
+            audio: None,
+            audio_loader: None,
+            transcript: String::new(),
+            audio_player: None,
+            audio_paused: false,
+            audio_position: Duration::ZERO,
+            transcribe_after_download: false,
         };
         app.reload_wordlists();
         // Ask Ollama for its models now (a quick local request), so photos can
@@ -209,8 +233,9 @@ impl SpeechApp {
             Some((JobKind::Saving, _)) => "progress.saving",
             Some((JobKind::Downloading, _)) => "progress.downloading",
             Some((JobKind::Translating, _)) => "progress.translating",
+            Some((JobKind::Transcribing, _)) => "progress.transcribing",
             None if self.setting_up_ollama => "progress.setting_up",
-            None if self.loading_file => "progress.opening",
+            None if self.loading_file || self.audio_loader.is_some() => "progress.opening",
             None => "progress.nothing",
         };
         let msg = tf(key, &[("percent", &percent)]);
@@ -417,6 +442,42 @@ impl SpeechApp {
                     }
                 }
                 Msg::Translated(result) => self.translated(result),
+                Msg::AudioLoaded(path, result) => self.audio_loaded(path, result),
+                Msg::AudioPosition(position) => {
+                    if self.audio_player.is_some() {
+                        self.audio_position = position;
+                    }
+                }
+                Msg::AudioEnded(result) => {
+                    self.audio_player = None;
+                    self.audio_paused = false;
+                    self.audio_position = Duration::ZERO;
+                    match result {
+                        Ok(true) => self.announce(t("player.finished")),
+                        // Stopped because another file was chosen: that file
+                        // is being announced instead.
+                        Ok(false) if self.audio_loader.is_some() => {}
+                        Ok(false) => self.announce(t("player.stopped")),
+                        Err(e) => self.show_error(tf("player.play_failed", &[("error", &e)])),
+                    }
+                }
+                Msg::WhisperDownloaded(model, result) => {
+                    self.job = None;
+                    let transcribe = std::mem::take(&mut self.transcribe_after_download);
+                    match result {
+                        Ok(true) => {
+                            let done = tf("whisper.downloaded", &[("model", &model.name())]);
+                            if transcribe && self.audio.is_some() {
+                                self.transcribe_audio(done);
+                            } else {
+                                self.announce(done);
+                            }
+                        }
+                        Ok(false) => self.announce(t("whisper.download_stopped")),
+                        Err(e) => self.show_error(tf("whisper.download_failed", &[("error", &e)])),
+                    }
+                }
+                Msg::Transcribed(path, result) => self.transcribed(path, result),
                 Msg::Update(result, requested) => self.update_checked(result, requested),
                 Msg::Status(s) => self.announce(s),
                 Msg::Progress(p) => self.progress = p.clamp(0.0, 1.0),
@@ -684,6 +745,11 @@ impl SpeechApp {
     }
 
     fn start_speaking(&mut self, job: SpeechJob, message: String) {
+        // One sound at a time, so the voice can be heard.
+        if self.audio_player.is_some() {
+            self.announce(t("read.audio_playing"));
+            return;
+        }
         let kind = if job.preview { JobKind::Previewing } else { JobKind::Speaking };
         let control = Arc::new(Control::default());
         self.job = Some((kind, control.clone()));
@@ -1007,6 +1073,236 @@ impl SpeechApp {
         }
     }
 
+    // ----- audio player -------------------------------------------------
+
+    fn choose_audio(&mut self) {
+        if self.audio_loader.is_some() {
+            return;
+        }
+        if matches!(self.job, Some((JobKind::Transcribing, _))) {
+            self.announce(t("player.wait_transcribing"));
+            return;
+        }
+        let Some(path) = rfd::FileDialog::new()
+            .set_title(t("player.dialog_title"))
+            .add_filter(t("player.filter"), &["wav", "mp3"])
+            .pick_file()
+        else {
+            return;
+        };
+        if let Some(control) = &self.audio_player {
+            control.stop();
+        }
+        let control = Arc::new(Control::default());
+        self.audio_loader = Some(control.clone());
+        self.announce(tf("player.opening", &[("name", &file_name(&path))]));
+        self.rep.spawn(move |rep| worker::load_audio(rep, control, path));
+    }
+
+    fn audio_loaded(&mut self, path: PathBuf, result: Result<Option<Arc<Listened>>, String>) {
+        self.audio_loader = None;
+        let name = file_name(&path);
+        let audio = match result {
+            Ok(Some(audio)) => audio,
+            Ok(None) => return self.announce(tf("player.open_stopped", &[("name", &name)])),
+            Err(e) => return self.show_error(tf("file.load_failed", &[("name", &name), ("error", &e)])),
+        };
+        self.audio_position = Duration::ZERO;
+        self.transcript.clear();
+        self.audio = Some((path, audio.clone()));
+        let mut intro = tf("player.loaded", &[("name", &name), ("length", &spoken_duration(audio.duration))]);
+        if audio.sound == SoundKind::Speech {
+            if audio.cut_short {
+                intro = format!("{intro} {}", t("player.cut_short"));
+            }
+            return self.transcribe_audio(format!("{intro} {}", t("player.speech")));
+        }
+        let note = match audio.sound {
+            SoundKind::Silent => t("player.silent"),
+            _ => tf("player.not_speech", &[("button", &t("player.transcribe"))]),
+        };
+        self.announce(format!("{intro} {note}"));
+    }
+
+    /// Plays the audio file from where it was left, or resumes it if paused.
+    fn play_audio(&mut self) {
+        if self.audio_player.is_some() {
+            if self.audio_paused {
+                self.toggle_audio_pause();
+            }
+            return;
+        }
+        let Some((path, audio)) = &self.audio else {
+            self.announce(tf("player.nothing", &[("key_name", &MOD_KEY.1)]));
+            return;
+        };
+        if matches!(self.job, Some((JobKind::Speaking | JobKind::Previewing, _))) {
+            self.announce(t("player.reading_aloud"));
+            return;
+        }
+        // Start again from the beginning if the last play reached the end.
+        let start = if self.audio_position + Duration::from_millis(500) >= audio.duration {
+            Duration::ZERO
+        } else {
+            self.audio_position
+        };
+        let path = path.clone();
+        let control = Arc::new(Control::default());
+        self.audio_player = Some(control.clone());
+        self.audio_paused = false;
+        self.audio_position = start;
+        self.announce(t("player.playing"));
+        self.rep.spawn(move |rep| worker::play_audio(rep, control, path, start));
+    }
+
+    fn toggle_audio_pause(&mut self) {
+        let Some(control) = &self.audio_player else { return };
+        self.audio_paused = !self.audio_paused;
+        control.set_paused(self.audio_paused);
+        let msg = if self.audio_paused {
+            tf("player.paused", &[("position", &spoken_duration(self.audio_position))])
+        } else {
+            t("read.resumed")
+        };
+        self.announce(msg);
+    }
+
+    /// Stops the audio file playing, or being opened.
+    fn stop_audio(&mut self) {
+        for control in [&self.audio_player, &self.audio_loader].into_iter().flatten() {
+            control.stop();
+        }
+    }
+
+    /// Moves `seconds` forward (or back, if negative) in the audio file.
+    fn skip_audio(&mut self, seconds: f64) {
+        let Some((_, audio)) = &self.audio else { return };
+        let to = (self.audio_position.as_secs_f64() + seconds).clamp(0.0, audio.duration.as_secs_f64());
+        self.audio_position = Duration::from_secs_f64(to);
+        if let Some(control) = &self.audio_player {
+            control.seek(self.audio_position);
+        }
+        self.announce_audio_position();
+    }
+
+    /// Says where in the audio file playback is (F7 while it plays).
+    fn announce_audio_position(&mut self) {
+        let Some((_, audio)) = &self.audio else { return };
+        let length = spoken_duration(audio.duration);
+        let position = spoken_duration(self.audio_position);
+        let key = if self.audio_paused { "player.position_paused" } else { "player.position" };
+        self.announce(tf(key, &[("position", &position), ("length", &length)]));
+    }
+
+    /// Transcribes the audio file with Whisper, first offering to download
+    /// the model if it isn't on the computer yet. `intro` is said first.
+    fn transcribe_audio(&mut self, intro: String) {
+        let Some((path, audio)) = self.audio.clone() else { return };
+        if self.is_busy() {
+            self.announce(format!("{intro} {}", t("transcript.busy")).trim().to_owned());
+            return;
+        }
+        let model = self.settings.whisper_model;
+        if !model.is_downloaded() {
+            self.offer_whisper_download(intro);
+            return;
+        }
+        let control = Arc::new(Control::default());
+        self.job = Some((JobKind::Transcribing, control.clone()));
+        self.progress = 0.0;
+        self.transcript.clear();
+        let started = tf("transcript.started", &[("model", &model.name())]);
+        self.announce(format!("{intro} {started}").trim().to_owned());
+        self.rep.spawn(move |rep| worker::transcribe(rep, control, model, path, audio));
+    }
+
+    /// The Whisper model isn't on the computer. Asks whether to download it,
+    /// and transcribes the audio file when it arrives.
+    fn offer_whisper_download(&mut self, intro: String) {
+        let model = self.settings.whisper_model;
+        let size = tf("model.size", &[("size", &model.size())]);
+        if !intro.is_empty() {
+            self.announce(intro);
+        }
+        let yes = rfd::MessageDialog::new()
+            .set_title(t("whisper.download_title"))
+            .set_description(tf("whisper.download_question", &[("model", &model.name()), ("size", &size)]))
+            .set_buttons(rfd::MessageButtons::YesNo)
+            .set_level(rfd::MessageLevel::Info)
+            .show()
+            == rfd::MessageDialogResult::Yes;
+        if !yes {
+            self.announce(tf("whisper.not_downloaded", &[("button", &t("player.transcribe"))]));
+            return;
+        }
+        let control = Arc::new(Control::default());
+        self.job = Some((JobKind::Downloading, control.clone()));
+        self.progress = 0.0;
+        self.transcribe_after_download = true;
+        self.announce(tf("whisper.downloading", &[("model", &model.name()), ("size", &size)]));
+        self.rep.spawn(move |rep| worker::download_whisper(rep, control, model));
+    }
+
+    fn transcribed(&mut self, path: PathBuf, result: Result<Option<String>, String>) {
+        self.job = None;
+        let name = file_name(&path);
+        match result {
+            Ok(None) => self.announce(t("transcript.stopped")),
+            Ok(Some(text)) if text.trim().is_empty() => self.announce(tf("transcript.no_speech", &[("name", &name)])),
+            Ok(Some(text)) => {
+                // Keep it only if the same file is still chosen.
+                if self.audio.as_ref().is_some_and(|(p, _)| *p == path) {
+                    let words = text.split_whitespace().count();
+                    self.transcript = text;
+                    self.announce(tf(
+                        "transcript.done",
+                        &[("name", &name), ("count", &words), ("key_name", &MOD_KEY.1)],
+                    ));
+                }
+            }
+            Err(e) => self.show_error(tf("transcript.failed", &[("error", &e)])),
+        }
+    }
+
+    fn copy_transcript(&mut self, ctx: &egui::Context) {
+        if self.transcript.is_empty() {
+            self.announce(t("copy.nothing"));
+            return;
+        }
+        ctx.copy_text(self.transcript.clone());
+        let words = self.transcript.split_whitespace().count();
+        self.announce(tf("copy.done", &[("count", &words)]));
+    }
+
+    fn save_transcript(&mut self) {
+        if self.transcript.is_empty() {
+            self.announce(t("transcript.nothing"));
+            return;
+        }
+        let stem = self
+            .audio
+            .as_ref()
+            .and_then(|(p, _)| p.file_stem())
+            .map(|s| s.to_string_lossy().into_owned())
+            .unwrap_or_else(|| t("transcript.default_name"));
+        let Some(mut path) = rfd::FileDialog::new()
+            .set_title(t("transcript.save_title"))
+            .set_file_name(format!("{stem}.txt"))
+            .add_filter(t("transcript.filter"), &["txt"])
+            .save_file()
+        else {
+            return;
+        };
+        if !path.extension().is_some_and(|e| e.eq_ignore_ascii_case("txt")) {
+            path.as_mut_os_string().push(".txt");
+        }
+        let name = file_name(&path);
+        match std::fs::write(&path, &self.transcript) {
+            Ok(()) => self.announce(tf("transcript.saved", &[("name", &name)])),
+            Err(e) => self.show_error(tf("transcript.save_failed", &[("name", &name), ("error", &e)])),
+        }
+    }
+
     // ----- keyboard -----------------------------------------------------
 
     fn handle_shortcuts(&mut self, ctx: &egui::Context) {
@@ -1014,35 +1310,45 @@ impl SpeechApp {
         let pressed = |s: KeyboardShortcut| ctx.input_mut(|i| i.consume_shortcut(&s));
         let popup_open = ctx.any_popup_open();
 
-        for (key, tab) in [(Key::Num1, Tab::General), (Key::Num2, Tab::Settings), (Key::Num3, Tab::Wordlists)] {
+        for (key, tab) in [Key::Num1, Key::Num2, Key::Num3, Key::Num4].into_iter().zip(Tab::ALL) {
             if pressed(cmd(key)) {
                 self.switch_tab(tab);
             }
         }
+        let count = Tab::ALL.len();
         if pressed(KeyboardShortcut::new(Modifiers::CTRL | Modifiers::SHIFT, Key::Tab)) {
             let i = Tab::ALL.iter().position(|t| *t == self.tab).unwrap_or(0);
-            self.switch_tab(Tab::ALL[(i + 2) % 3]);
+            self.switch_tab(Tab::ALL[(i + count - 1) % count]);
         } else if pressed(KeyboardShortcut::new(Modifiers::CTRL, Key::Tab)) {
             let i = Tab::ALL.iter().position(|t| *t == self.tab).unwrap_or(0);
-            self.switch_tab(Tab::ALL[(i + 1) % 3]);
+            self.switch_tab(Tab::ALL[(i + 1) % count]);
         }
+        // On the Audio player tab, the usual keys work on the audio file.
+        let on_player = self.tab == Tab::Player;
         if pressed(cmd(Key::O)) {
-            self.choose_file();
+            if on_player { self.choose_audio() } else { self.choose_file() }
         }
         if pressed(cmd(Key::S)) {
-            self.save_audio();
+            if on_player { self.save_transcript() } else { self.save_audio() }
         }
         if pressed(KeyboardShortcut::new(Modifiers::NONE, Key::F5)) {
-            self.read_aloud();
+            if on_player { self.play_audio() } else { self.read_aloud() }
         }
+        // F6, F7 and Escape work on the audio file wherever it is playing.
+        let audio_playing = self.audio_player.is_some();
         if pressed(KeyboardShortcut::new(Modifiers::NONE, Key::F6)) {
-            self.toggle_pause();
+            if audio_playing { self.toggle_audio_pause() } else { self.toggle_pause() }
         }
         if pressed(KeyboardShortcut::new(Modifiers::NONE, Key::F7)) {
-            self.announce_progress();
+            if audio_playing { self.announce_audio_position() } else { self.announce_progress() }
         }
-        if !popup_open && self.is_busy() && pressed(KeyboardShortcut::new(Modifiers::NONE, Key::Escape)) {
-            self.stop();
+        // Escape also stops an audio file being opened.
+        let audio_active = audio_playing || self.audio_loader.is_some();
+        if !popup_open
+            && (audio_active || self.is_busy())
+            && pressed(KeyboardShortcut::new(Modifiers::NONE, Key::Escape))
+        {
+            if audio_active { self.stop_audio() } else { self.stop() }
         }
     }
 
@@ -1054,7 +1360,7 @@ impl SpeechApp {
     // ----- drawing ------------------------------------------------------
 
     fn tab_bar(&mut self, ui: &mut Ui) {
-        ui.columns(3, |cols| {
+        ui.columns(Tab::ALL.len(), |cols| {
             for (col, tab) in cols.iter_mut().zip(Tab::ALL) {
                 let selected = self.tab == tab;
                 let text = RichText::new(tab.label()).family(tab_font()).size(18.0);
@@ -1163,6 +1469,7 @@ impl SpeechApp {
             Some((JobKind::Saving, _)) => t("general.cancel_saving"),
             Some((JobKind::Downloading, _)) => t("general.stop_downloading"),
             Some((JobKind::Translating, _)) => t("general.stop_translating"),
+            Some((JobKind::Transcribing, _)) => self.stop_transcribing_label(),
             _ => t("general.stop"),
         };
         if full_button(ui, &stop_label, self.is_busy()).clicked() {
@@ -1218,6 +1525,17 @@ impl SpeechApp {
             self.settings.resolve_location = lindex == 1;
             self.settings.save();
         }
+
+        // Speech recognition model for the Audio player tab.
+        let whisper_models = WhisperModel::ALL;
+        let labels: Vec<String> = whisper_models.iter().map(|m| whisper_label(*m)).collect();
+        let mut windex = whisper_models.iter().position(|m| *m == self.settings.whisper_model).unwrap_or(0);
+        let whisper_busy = matches!(self.job, Some((JobKind::Transcribing | JobKind::Downloading, _)));
+        if dropdown(ui, "whisper", &t("settings.whisper"), &labels, &mut windex, !whisper_busy) {
+            self.settings.whisper_model = whisper_models[windex];
+            self.settings.save();
+        }
+        ui.label(tf("settings.whisper_note", &[("folder", &crate::paths::whisper_dir().display())]));
 
         let part_options = vec![t("settings.parts_run_on"), t("settings.parts_announce")];
         let mut pindex = usize::from(self.settings.announce_parts);
@@ -1388,11 +1706,93 @@ impl SpeechApp {
         }
     }
 
+    fn player_tab(&mut self, ui: &mut Ui) {
+        heading(ui, &t("player.heading"));
+        let transcribing = matches!(self.job, Some((JobKind::Transcribing, _)));
+
+        let mut file_text = match (&self.audio, self.audio_loader.is_some()) {
+            (_, true) => t("general.loading"),
+            (Some((p, _)), _) => p.display().to_string(),
+            (None, _) => t("general.no_file"),
+        };
+        text_field(ui, &t("general.current_file"), &mut file_text, false);
+        let label = tf("player.choose", &[("key", &MOD_KEY.0)]);
+        if full_button(ui, &label, self.audio_loader.is_none() && !transcribing).clicked() {
+            self.choose_audio();
+        }
+
+        if let Some((_, audio)) = &self.audio {
+            let sound = match audio.sound {
+                SoundKind::Speech => t("player.kind_speech"),
+                SoundKind::Other => t("player.kind_other"),
+                SoundKind::Silent => t("player.kind_silent"),
+            };
+            let summary = tf("player.summary", &[("length", &spoken_duration(audio.duration)), ("sound", &sound)]);
+            ui.label(&summary);
+            waveform(ui, &audio.waveform, self.audio_fraction(), &tf("player.waveform", &[("summary", &summary)]));
+        }
+
+        let has_audio = self.audio.is_some();
+        let playing = self.audio_player.is_some();
+        let speaking = matches!(self.job, Some((JobKind::Speaking | JobKind::Previewing, _)));
+        if full_button(ui, &t("player.play"), has_audio && !playing && !speaking).clicked() {
+            self.play_audio();
+        }
+        let pause_label = if self.audio_paused { t("general.resume") } else { t("general.pause") };
+        if full_button(ui, &pause_label, playing).clicked() {
+            self.toggle_audio_pause();
+        }
+        if full_button(ui, &t("general.stop"), playing || self.audio_loader.is_some()).clicked() {
+            self.stop_audio();
+        }
+        if full_button(ui, &t("player.back"), has_audio).clicked() {
+            self.skip_audio(-10.0);
+        }
+        if full_button(ui, &t("player.forward"), has_audio).clicked() {
+            self.skip_audio(10.0);
+        }
+
+        ui.add_space(8.0);
+        heading(ui, &t("transcript.heading"));
+        if transcribing {
+            if full_button(ui, &self.stop_transcribing_label(), true).clicked() {
+                self.stop();
+            }
+        } else if full_button(ui, &t("player.transcribe"), has_audio && !self.is_busy()).clicked() {
+            self.transcribe_audio(String::new());
+        }
+        let text = if self.transcript.is_empty() { t("transcript.none") } else { self.transcript.clone() };
+        text_area(ui, &t("transcript.label"), &text);
+        let has_transcript = !self.transcript.is_empty();
+        if full_button(ui, &t("transcript.copy"), has_transcript).clicked() {
+            let ctx = ui.ctx().clone();
+            self.copy_transcript(&ctx);
+        }
+        if full_button(ui, &tf("transcript.save", &[("key", &MOD_KEY.0)]), has_transcript).clicked() {
+            self.save_transcript();
+        }
+    }
+
+    /// While the audio file plays, Escape stops it rather than transcribing,
+    /// so the button doesn't offer Escape then.
+    fn stop_transcribing_label(&self) -> String {
+        if self.audio_player.is_some() { t("transcript.stop") } else { t("general.stop_transcribing") }
+    }
+
+    /// How far through the audio file playback is, from 0.0 to 1.0.
+    fn audio_fraction(&self) -> f32 {
+        match &self.audio {
+            Some((_, audio)) if !audio.duration.is_zero() => {
+                (self.audio_position.as_secs_f32() / audio.duration.as_secs_f32()).min(1.0)
+            }
+            _ => 0.0,
+        }
+    }
+
     /// A full-width progress bar for reading aloud, saving audio and loading
     /// files. Screen readers get it as a progress indicator named "Progress",
     /// with a percentage value.
     fn progress_bar(&self, ui: &mut Ui) {
-        let percent = format!("{:.0}", self.progress * 100.0);
         let (fraction, key) = match &self.job {
             Some((JobKind::Speaking, _)) if self.paused => (Some(self.progress), "bar.paused"),
             Some((JobKind::Speaking, _)) => (Some(self.progress), "bar.reading"),
@@ -1400,10 +1800,16 @@ impl SpeechApp {
             Some((JobKind::Saving, _)) => (Some(self.progress), "bar.saving"),
             Some((JobKind::Downloading, _)) => (Some(self.progress), "bar.downloading"),
             Some((JobKind::Translating, _)) => (Some(self.progress), "bar.translating"),
+            Some((JobKind::Transcribing, _)) => (Some(self.progress), "bar.transcribing"),
             None if self.setting_up_ollama => (None, "bar.setting_up"),
-            None if self.loading_file => (None, "bar.opening"),
+            None if self.loading_file || self.audio_loader.is_some() => (None, "bar.opening"),
+            None if self.audio_player.is_some() => {
+                let key = if self.audio_paused { "bar.audio_paused" } else { "bar.audio_playing" };
+                (Some(self.audio_fraction()), key)
+            }
             None => (Some(0.0), "bar.nothing"),
         };
+        let percent = format!("{:.0}", fraction.unwrap_or(0.0) * 100.0);
         let text = tf(key, &[("percent", &percent)]);
         let bar = egui::ProgressBar::new(fraction.unwrap_or(0.0))
             .desired_width(ui.available_width())
@@ -1467,6 +1873,7 @@ impl eframe::App for SpeechApp {
                     Tab::General => self.general_tab(ui),
                     Tab::Settings => self.settings_tab(ui),
                     Tab::Wordlists => self.wordlists_tab(ui),
+                    Tab::Player => self.player_tab(ui),
                 }
             });
         });
@@ -1563,6 +1970,42 @@ fn text_field(ui: &mut Ui, label: &str, value: &mut String, editable: bool) -> e
         ui.ctx().accesskit_node_builder(resp.id, |node| node.set_read_only());
     }
     resp
+}
+
+/// A read-only box of several lines that a screen reader can review.
+fn text_area(ui: &mut Ui, label: &str, value: &str) {
+    let label = ui.label(label);
+    let mut text = value;
+    let edit = egui::TextEdit::multiline(&mut text).desired_width(f32::INFINITY).desired_rows(10);
+    let resp = ui.add(edit).labelled_by(label.id);
+    ui.ctx().accesskit_node_builder(resp.id, |node| node.set_read_only());
+}
+
+/// Draws the waveform of an audio file, with the part already played in the
+/// highlight colour and a line where playback is. Screen readers get it as an
+/// image named `description`.
+fn waveform(ui: &mut Ui, peaks: &[f32], played: f32, description: &str) {
+    let (rect, resp) = ui.allocate_exact_size(egui::vec2(ui.available_width(), 72.0), egui::Sense::hover());
+    let visuals = ui.visuals();
+    let painter = ui.painter_at(rect);
+    painter.rect_filled(rect, 4.0, visuals.extreme_bg_color);
+    let bar_width = (rect.width() / peaks.len().max(1) as f32).max(1.0);
+    let middle = rect.center().y;
+    for (i, peak) in peaks.iter().enumerate() {
+        let at = (i as f32 + 0.5) / peaks.len() as f32;
+        let x = rect.left() + at * rect.width();
+        let half = (peak * rect.height() / 2.0 * 0.9).max(0.5);
+        let colour = if at <= played { visuals.selection.bg_fill } else { visuals.weak_text_color() };
+        let bar = [egui::pos2(x, middle - half), egui::pos2(x, middle + half)];
+        painter.line_segment(bar, egui::Stroke::new(bar_width, colour));
+    }
+    let x = rect.left() + played * rect.width();
+    let playhead = [egui::pos2(x, rect.top()), egui::pos2(x, rect.bottom())];
+    painter.line_segment(playhead, egui::Stroke::new(2.0, visuals.text_color()));
+    ui.ctx().accesskit_node_builder(resp.id, |node| {
+        node.set_role(Role::Image);
+        node.set_label(description);
+    });
 }
 
 fn password_field(ui: &mut Ui, label: &str, value: &mut String) {
@@ -1667,6 +2110,33 @@ fn model_size() -> String {
 /// so it follows the interface language.
 fn voice_name(voice: &Voice) -> String {
     if voice.id.is_empty() { t("voice.default") } else { voice.name.clone() }
+}
+
+/// A length of time as it is said, such as "1 minute 5 seconds".
+fn spoken_duration(duration: Duration) -> String {
+    let total = duration.as_secs_f64().round() as u64;
+    let units = [
+        (total / 3600, "time.hour", "time.hours"),
+        (total / 60 % 60, "time.minute", "time.minutes"),
+        (total % 60, "time.second", "time.seconds"),
+    ];
+    let parts: Vec<String> = units
+        .into_iter()
+        .filter(|(count, _, _)| *count > 0)
+        .map(|(count, one, other)| if count == 1 { t(one) } else { tf(other, &[("count", &count)]) })
+        .collect();
+    if parts.is_empty() { tf("time.seconds", &[("count", &0)]) } else { parts.join(" ") }
+}
+
+/// A Whisper model as it is listed on the Settings tab.
+fn whisper_label(model: WhisperModel) -> String {
+    let size = tf("model.size", &[("size", &model.size())]);
+    let key = match model {
+        WhisperModel::Base => "settings.whisper_base",
+        WhisperModel::Small => "settings.whisper_small",
+    };
+    let label = tf(key, &[("model", &model.name()), ("size", &size)]);
+    if model.is_downloaded() { format!("{label} {}", t("settings.whisper_downloaded")) } else { label }
 }
 
 fn display_name(item: &Installed) -> String {
