@@ -21,6 +21,13 @@ the app.
   is sent over the internet. Translations are saved as files you can correct,
   and anything not translated is shown in English.
 
+### Changed
+
+- The debug log now starts fresh each time the app opens, so it only covers
+  the current session. The log from the session before is kept as
+  `speechout.previous.log`; attach that one if a problem happened before you
+  restarted the app.
+
 ## [1.6.0] - 2026-10-02
 
 ### Changed
