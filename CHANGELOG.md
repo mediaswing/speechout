@@ -10,6 +10,8 @@ the app.
 
 ## [Unreleased]
 
+## [1.9.0] - 2026-10-03
+
 ### Added
 
 - A new **Audio player** tab plays WAV and MP3 files. Play, Pause, Stop, and
