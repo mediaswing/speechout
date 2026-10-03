@@ -30,8 +30,9 @@ A good bug report says:
 - what you did, what you expected, and what happened instead
 
 The debug log (`speechout.log`, in the folder chosen on the Settings tab) often
-helps. It never records API keys or the text being read, but please check it
-before attaching it.
+helps. It covers only the current session; if the problem happened before you
+restarted the app, attach `speechout.previous.log` instead. It never records API
+keys or the text being read, but please check it before attaching it.
 
 ## Design principles
 

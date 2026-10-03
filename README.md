@@ -86,7 +86,9 @@ automatically.
 - **Updates**: whether to check GitHub for a new version when the app starts,
   and a button to check now. When a new version is out, a dialog offers to
   open its download page.
-- **Debug log folder**: where the app writes `speechout.log`.
+- **Debug log folder**: where the app writes `speechout.log`. Each launch
+  starts a fresh log; the one from the session before is kept as
+  `speechout.previous.log`.
 - **Cloud voice API keys**: one box per service. Boxes are left empty for
   security; type a new key only to add or replace one.
 
