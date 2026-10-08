@@ -15,7 +15,9 @@ the app.
 - PowerPoint presentations (PPTX, and PPT from PowerPoint 97 to 2003) can now
   be read aloud. Each slide is read in the order it is shown, starting with
   its number ("Slide 1."), and slides with no text are skipped. Speaker notes
-  are left out.
+  are left out. In PPTX files, the text in SmartArt graphics is read box by
+  box, and charts are read out as their title, then each series with its
+  value for each category, such as "North. Q1: 10. Q2: 20."
 - The app now plays a short sound when something succeeds, such as a file
   opening, reading aloud reaching the end or audio being saved, and a
   different sound when something fails. The sounds never play over speech or

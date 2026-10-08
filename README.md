@@ -43,7 +43,7 @@ automatically.
 | Control | What it does |
 | --- | --- |
 | Current file | Shows the file you chose. |
-| Choose a file… | Opens a PDF, TXT, DOCX, ODT, CSV, ODS, PPTX, PPT, JPEG or HEIC file. Photos are described by the local AI model. CSV and ODS files are read as a table, row by row, and each sheet of an ODS file is read in turn. PowerPoint presentations are read slide by slide, starting each with its number; speaker notes are left out. |
+| Choose a file… | Opens a PDF, TXT, DOCX, ODT, CSV, ODS, PPTX, PPT, JPEG or HEIC file. Photos are described by the local AI model. CSV and ODS files are read as a table, row by row, and each sheet of an ODS file is read in turn. PowerPoint presentations are read slide by slide, starting each with its number; speaker notes are left out. In PPTX files, SmartArt is read box by box, and charts are read as their title followed by each series with its values, such as "North. Q1: 10. Q2: 20." |
 | Speech service | System voices, plus any cloud service with a saved API key. A line underneath says whether speech is made on your computer or your text is sent to the service. |
 | Voice | The voice to use. The app remembers the voice you chose for each service. |
 | Speaking speed | Only for ElevenLabs (0.7 to 1.2 times normal speed) and Deepgram Aura (0.7 to 1.5 times). Remembered for each service. |
