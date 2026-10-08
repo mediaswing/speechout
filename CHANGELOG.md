@@ -10,6 +10,8 @@ the app.
 
 ## [Unreleased]
 
+## [2.1.0] - 2026-10-08
+
 ### Added
 
 - PowerPoint presentations (PPTX, and PPT from PowerPoint 97 to 2003) can now
