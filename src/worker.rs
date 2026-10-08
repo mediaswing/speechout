@@ -44,8 +44,9 @@ pub enum Msg {
     Status(String),
     /// How far through the current job we are, from 0.0 to 1.0.
     Progress(f32),
-    /// A read-aloud or save job ended normally.
-    Done(String),
+    /// A read-aloud or save job ended normally: true if it got to the end,
+    /// false if it was stopped.
+    Done(String, bool),
     /// A read-aloud or save job ended with an error.
     Failed(String),
 }
@@ -327,13 +328,13 @@ pub fn speak(rep: Reporter, control: Arc<Control>, job: SpeechJob) {
     for (i, chunk) in chunks.iter().enumerate() {
         progress.wait(&rep, &playback, &control, || playback.queued() >= 2);
         if control.is_stopped() {
-            return rep.send(Msg::Done(stopped));
+            return rep.send(Msg::Done(stopped, false));
         }
         match job.render(&rep, &control, chunk, || progress.report(&rep, &playback)) {
-            Ok(None) => return rep.send(Msg::Done(stopped)),
+            Ok(None) => return rep.send(Msg::Done(stopped, false)),
             Ok(Some(pcm)) => {
                 if control.is_stopped() {
-                    return rep.send(Msg::Done(stopped));
+                    return rep.send(Msg::Done(stopped, false));
                 }
                 progress.durations.push(pcm.duration_secs());
                 playback.append(pcm);
@@ -348,9 +349,9 @@ pub fn speak(rep: Reporter, control: Arc<Control>, job: SpeechJob) {
     }
     progress.wait(&rep, &playback, &control, || playback.queued() > 0);
     if control.is_stopped() {
-        rep.send(Msg::Done(stopped));
+        rep.send(Msg::Done(stopped, false));
     } else {
-        rep.send(Msg::Done(finished));
+        rep.send(Msg::Done(finished, true));
     }
 }
 
@@ -362,10 +363,10 @@ pub fn save(rep: Reporter, control: Arc<Control>, job: SpeechJob, path: PathBuf,
     rep.send(Msg::Progress(0.0));
     for (i, chunk) in chunks.iter().enumerate() {
         if control.is_stopped() {
-            return rep.send(Msg::Done(t("save.cancelled")));
+            return rep.send(Msg::Done(t("save.cancelled"), false));
         }
         match job.render(&rep, &control, chunk, || ()) {
-            Ok(None) => return rep.send(Msg::Done(t("save.cancelled"))),
+            Ok(None) => return rep.send(Msg::Done(t("save.cancelled"), false)),
             Ok(Some(pcm)) => pieces.push(pcm),
             Err(e) => {
                 log::warn!("synthesis failed on piece {}: {e:#}", i + 1);
@@ -386,7 +387,7 @@ pub fn save(rep: Reporter, control: Arc<Control>, job: SpeechJob, path: PathBuf,
         Ok(()) => {
             let name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
             log::info!("saved audio ({} samples)", joined.samples.len());
-            rep.send(Msg::Done(tf("save.saved", &[("name", &name)])));
+            rep.send(Msg::Done(tf("save.saved", &[("name", &name)]), true));
         }
         Err(e) => rep.send(Msg::Failed(err(e))),
     }

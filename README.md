@@ -9,8 +9,8 @@ The program file is called `speechout`.
 
 ## What it does
 
-- **Reads PDF, TXT, DOCX, ODT, CSV and ODS files aloud** with the voices built
-  into your computer, or with cloud voices from **ElevenLabs**, **OpenAI**, **Deepgram
+- **Reads PDF, TXT, DOCX, ODT, CSV, ODS, PPTX and PPT files aloud** with the
+  voices built into your computer, or with cloud voices from **ElevenLabs**, **OpenAI**, **Deepgram
   Aura** or **Speechify** once you have saved an API key for that service.
 - **Saves the spoken text as an audio file**, in MP3 or WAV format.
 - **Describes photos** (JPEG and HEIC/HEIF) using a local AI model running in
@@ -43,7 +43,7 @@ automatically.
 | Control | What it does |
 | --- | --- |
 | Current file | Shows the file you chose. |
-| Choose a file… | Opens a PDF, TXT, DOCX, ODT, CSV, ODS, JPEG or HEIC file. Photos are described by the local AI model. CSV and ODS files are read as a table, row by row, and each sheet of an ODS file is read in turn. |
+| Choose a file… | Opens a PDF, TXT, DOCX, ODT, CSV, ODS, PPTX, PPT, JPEG or HEIC file. Photos are described by the local AI model. CSV and ODS files are read as a table, row by row, and each sheet of an ODS file is read in turn. PowerPoint presentations are read slide by slide, starting each with its number; speaker notes are left out. |
 | Speech service | System voices, plus any cloud service with a saved API key. A line underneath says whether speech is made on your computer or your text is sent to the service. |
 | Voice | The voice to use. The app remembers the voice you chose for each service. |
 | Speaking speed | Only for ElevenLabs (0.7 to 1.2 times normal speed) and Deepgram Aura (0.7 to 1.5 times). Remembered for each service. |
@@ -134,6 +134,11 @@ or on phone-quality audio. Choosing the number of people helps.
 - **Long texts**: text over 4,800 characters is read in parts. Choose whether
   each part starts with "This is part 1 of 3", or the parts run on with no
   announcement, with only the usual short pause between sentences.
+- **Sounds**: whether to play a short sound when something succeeds (a file
+  opens, reading aloud reaches the end, audio is saved, a transcript is done)
+  or fails (whenever an error is shown). Sounds never play over speech or an
+  audio file that is playing, and starting either cuts off a sound already
+  playing. On by default.
 - **Updates**: whether to check GitHub for a new version when the app starts,
   and a button to check now. When a new version is out, a dialog offers to
   open its download page.
@@ -342,7 +347,7 @@ src/app.rs            The window, tabs and keyboard handling
 src/worker.rs         Background jobs (speaking, saving, loading)
 src/speech/           System and cloud voices
 src/audio.rs          Decoding, playback, WAV and MP3 export, and the speech check
-src/document.rs       PDF, TXT, DOCX, ODT, CSV and ODS text extraction
+src/document.rs       PDF, TXT, DOCX, ODT, CSV, ODS, PPTX and PPT text extraction
 src/vision.rs         Photo descriptions, GPS and place names
 src/transcribe.rs     Speech recognition with Whisper, and downloading its models
 src/speakers.rs       Working out who is speaking, with sherpa-onnx
@@ -355,6 +360,7 @@ src/logging.rs        Debug log
 src/platform/         Platform-specific code: windows.rs, macos.rs, linux.rs
 wordlists/            Example wordlists (built into the app)
 assets/fonts/         Google Sans fonts (built into the app) and their licence
+assets/sounds/        Success and failure sounds (built into the app) and credits
 ```
 
 ## Licence
@@ -365,6 +371,10 @@ The Speech Output Engine is free software, released under the
 The interface uses Google Sans: Medium for body text and Bold for the tabs.
 The fonts are built into the app and are licensed under the
 [SIL Open Font License 1.1](assets/fonts/OFL.txt).
+
+The success and failure sounds come from [Freesound](https://freesound.org)
+and are released under Creative Commons 0; see
+[assets/sounds/CREDITS.txt](assets/sounds/CREDITS.txt).
 
 Speech recognition uses [whisper.cpp](https://github.com/ggml-org/whisper.cpp),
 which is built into the app and is licensed under the MIT License. The Whisper

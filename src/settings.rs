@@ -38,6 +38,8 @@ pub struct Settings {
     pub whisper_model: WhisperModel,
     /// Whether transcripts say who is speaking.
     pub speaker_labels: SpeakerLabels,
+    /// Play a sound when something succeeds or fails.
+    pub sounds: bool,
 }
 
 impl Default for Settings {
@@ -58,6 +60,7 @@ impl Default for Settings {
             translation_model: String::new(),
             whisper_model: WhisperModel::Base,
             speaker_labels: SpeakerLabels::Off,
+            sounds: true,
         }
     }
 }

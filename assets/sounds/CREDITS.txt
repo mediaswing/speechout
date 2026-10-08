@@ -1,0 +1,11 @@
+Sounds built into the Speech Output Engine. Both are released under
+Creative Commons 0 (public domain), so no credit is required; it is given
+here with thanks.
+
+success.mp3
+  "short-loud-success-sound" by rayfaiq
+  https://freesound.org/s/810706/
+
+failure.wav
+  "Failure/wrong action.wav" by GabrielAraujo
+  https://freesound.org/s/242503/

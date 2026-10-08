@@ -210,7 +210,7 @@ Exec=speechout
 Icon=audio-speakers
 Terminal=false
 Categories=Utility;Accessibility;AudioVideo;Audio;
-Keywords=speech;tts;screen reader;accessibility;pdf;docx;odt;csv;ods;
+Keywords=speech;tts;screen reader;accessibility;pdf;docx;odt;csv;ods;pptx;ppt;powerpoint;
 ";
 
 const COPYRIGHT: &str = "Format: https://www.debian.org/doc/packaging-manuals/copyright-format/1.0/
@@ -327,11 +327,11 @@ pub fn package(out_dir: &Path) -> anyhow::Result<PathBuf> {
          Priority: optional\n\
          Homepage: https://github.com/mediaswing/speechout\n\
          Description: Speech Output Engine, an accessible text-to-speech reader\n \
-         Reads PDF, TXT, DOCX, ODT, CSV and ODS files aloud with system or cloud\n \
-         voices, saves speech as WAV or MP3, describes photos with a local AI model,\n \
-         plays WAV and MP3 files and transcribes the speech in them with Whisper, and\n \
-         applies XML pronunciation wordlists. Fully usable by keyboard and screen\n \
-         reader.\n",
+         Reads PDF, TXT, DOCX, ODT, CSV, ODS, PPTX and PPT files aloud with system\n \
+         or cloud voices, saves speech as WAV or MP3, describes photos with a local\n \
+         AI model, plays WAV and MP3 files and transcribes the speech in them with\n \
+         Whisper, and applies XML pronunciation wordlists. Fully usable by keyboard\n \
+         and screen reader.\n",
         arch = deb_arch()
     );
 

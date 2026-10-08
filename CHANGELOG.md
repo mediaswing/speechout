@@ -8,6 +8,20 @@ When a version tag is pushed, the release workflow copies the section for that
 version onto the GitHub release page, so write each entry for people who use
 the app.
 
+## [Unreleased]
+
+### Added
+
+- PowerPoint presentations (PPTX, and PPT from PowerPoint 97 to 2003) can now
+  be read aloud. Each slide is read in the order it is shown, starting with
+  its number ("Slide 1."), and slides with no text are skipped. Speaker notes
+  are left out.
+- The app now plays a short sound when something succeeds, such as a file
+  opening, reading aloud reaching the end or audio being saved, and a
+  different sound when something fails. The sounds never play over speech or
+  an audio file that is playing. Turn them off under "Sounds" on the Settings
+  tab.
+
 ## [2.0.0] - 2026-10-08
 
 ### Added

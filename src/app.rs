@@ -12,7 +12,7 @@
 //!   dropdown, and the shortcuts below work from anywhere.
 //! * A thick focus ring is drawn around whichever control has focus.
 
-use crate::audio::{AudioFormat, Listened, SoundKind};
+use crate::audio::{AudioFormat, Cue, Listened, SoundKind};
 use crate::i18n::{self, Language, Translation, t, tf};
 use crate::settings::Settings;
 use crate::speech::{self, Provider, Voice};
@@ -129,6 +129,7 @@ pub struct SpeechApp {
     audio_position: Duration,
     /// Transcribe the audio file once the Whisper model has downloaded.
     transcribe_after_download: bool,
+    cues: crate::audio::Cues,
 }
 
 impl SpeechApp {
@@ -185,6 +186,7 @@ impl SpeechApp {
             audio_paused: false,
             audio_position: Duration::ZERO,
             transcribe_after_download: false,
+            cues: crate::audio::Cues::default(),
         };
         app.reload_wordlists();
         // Ask Ollama for its models now (a quick local request), so photos can
@@ -216,12 +218,23 @@ impl SpeechApp {
     fn show_error(&mut self, text: impl Into<String>) {
         let text = text.into();
         self.announce(text.clone());
+        self.cue(Cue::Failure);
         rfd::MessageDialog::new()
             .set_title(APP_TITLE)
             .set_description(text)
             .set_buttons(rfd::MessageButtons::Ok)
             .set_level(rfd::MessageLevel::Error)
             .show();
+    }
+
+    /// Plays the success or failure sound, unless sounds are turned off or
+    /// speech or an audio file is playing, which it would talk over.
+    fn cue(&mut self, cue: Cue) {
+        let speaking = matches!(self.job, Some((JobKind::Speaking | JobKind::Previewing, _))) && !self.paused;
+        let playing = self.audio_player.is_some() && !self.audio_paused;
+        if self.settings.sounds && !speaking && !playing {
+            self.cues.play(cue);
+        }
     }
 
     /// Speaks how far through reading or saving we are (F7).
@@ -403,7 +416,10 @@ impl SpeechApp {
                             self.ensure_models();
                             match photo {
                                 Some(path) => self.open_file(path, true),
-                                None => self.announce(tf("model.downloaded", &[("model", &model)])),
+                                None => {
+                                    self.announce(tf("model.downloaded", &[("model", &model)]));
+                                    self.cue(Cue::Success);
+                                }
                             }
                         }
                         Ok(false) => self.announce(t("model.download_stopped")),
@@ -438,6 +454,7 @@ impl SpeechApp {
                                 "file.loaded",
                                 &[("name", &name), ("count", &words), ("key_name", &MOD_KEY.1)],
                             ));
+                            self.cue(Cue::Success);
                         }
                         Err(e) => self.show_error(tf("file.load_failed", &[("name", &name), ("error", &e)])),
                     }
@@ -472,6 +489,7 @@ impl SpeechApp {
                                 self.transcribe_audio(done);
                             } else {
                                 self.announce(done);
+                                self.cue(Cue::Success);
                             }
                         }
                         Ok(false) => self.announce(t("whisper.download_stopped")),
@@ -488,6 +506,7 @@ impl SpeechApp {
                                 self.transcribe_audio(done);
                             } else {
                                 self.announce(done);
+                                self.cue(Cue::Success);
                             }
                         }
                         Ok(false) => self.announce(t("speakers.download_stopped")),
@@ -498,10 +517,14 @@ impl SpeechApp {
                 Msg::Update(result, requested) => self.update_checked(result, requested),
                 Msg::Status(s) => self.announce(s),
                 Msg::Progress(p) => self.progress = p.clamp(0.0, 1.0),
-                Msg::Done(s) => {
-                    self.job = None;
+                Msg::Done(s, finished) => {
+                    // A preview ending is not worth a sound.
+                    let job = self.job.take().map(|(kind, _)| kind);
                     self.paused = false;
                     self.announce(s);
+                    if finished && matches!(job, Some(JobKind::Speaking | JobKind::Saving)) {
+                        self.cue(Cue::Success);
+                    }
                 }
                 Msg::Failed(e) => {
                     self.job = None;
@@ -568,8 +591,8 @@ impl SpeechApp {
         }
         let Some(path) = rfd::FileDialog::new()
             .set_title(t("file.dialog_title"))
-            .add_filter(t("file.filter_all"), &["pdf", "txt", "docx", "odt", "csv", "ods", "jpg", "jpeg", "heic", "heif"])
-            .add_filter(t("file.filter_documents"), &["pdf", "txt", "docx", "odt", "csv", "ods"])
+            .add_filter(t("file.filter_all"), &["pdf", "txt", "docx", "odt", "csv", "ods", "pptx", "ppt", "jpg", "jpeg", "heic", "heif"])
+            .add_filter(t("file.filter_documents"), &["pdf", "txt", "docx", "odt", "csv", "ods", "pptx", "ppt"])
             .add_filter(t("file.filter_photos"), &["jpg", "jpeg", "heic", "heif"])
             .pick_file()
         else {
@@ -767,6 +790,7 @@ impl SpeechApp {
             self.announce(t("read.audio_playing"));
             return;
         }
+        self.cues.stop();
         let kind = if job.preview { JobKind::Previewing } else { JobKind::Speaking };
         let control = Arc::new(Control::default());
         self.job = Some((kind, control.clone()));
@@ -780,6 +804,9 @@ impl SpeechApp {
         if let Some((JobKind::Speaking, control)) = &self.job {
             self.paused = !self.paused;
             control.set_paused(self.paused);
+            if !self.paused {
+                self.cues.stop();
+            }
             let msg = if self.paused { t("read.paused") } else { t("read.resumed") };
             self.announce(msg);
         }
@@ -917,6 +944,7 @@ impl SpeechApp {
             Ok(name) => {
                 self.reload_wordlists();
                 self.announce(tf("wordlists.imported", &[("name", &name)]));
+                self.cue(Cue::Success);
             }
             Err(e) => {
                 let error = format!("{e:#}");
@@ -1078,6 +1106,9 @@ impl SpeechApp {
                     i18n::activate(Some(&done.translation));
                 }
                 let label = done.language.label();
+                if !done.stopped {
+                    self.cue(Cue::Success);
+                }
                 self.announce(if done.stopped {
                     t("language.stopped")
                 } else if done.left == 0 {
@@ -1139,6 +1170,8 @@ impl SpeechApp {
             _ => tf("player.not_speech", &[("button", &t("player.transcribe"))]),
         };
         self.announce(format!("{intro} {note}"));
+        // Speech is transcribed next, and that gets the sound when it's done.
+        self.cue(Cue::Success);
     }
 
     /// Plays the audio file from where it was left, or resumes it if paused.
@@ -1163,6 +1196,7 @@ impl SpeechApp {
         } else {
             self.audio_position
         };
+        self.cues.stop();
         let path = path.clone();
         let control = Arc::new(Control::default());
         self.audio_player = Some(control.clone());
@@ -1176,6 +1210,9 @@ impl SpeechApp {
         let Some(control) = &self.audio_player else { return };
         self.audio_paused = !self.audio_paused;
         control.set_paused(self.audio_paused);
+        if !self.audio_paused {
+            self.cues.stop();
+        }
         let msg = if self.audio_paused {
             tf("player.paused", &[("position", &spoken_duration(self.audio_position))])
         } else {
@@ -1316,6 +1353,7 @@ impl SpeechApp {
                         None => {}
                     }
                     self.announce(msg);
+                    self.cue(Cue::Success);
                 }
             }
             Err(e) => self.show_error(tf("transcript.failed", &[("error", &e)])),
@@ -1356,7 +1394,10 @@ impl SpeechApp {
         }
         let name = file_name(&path);
         match std::fs::write(&path, &self.transcript) {
-            Ok(()) => self.announce(tf("transcript.saved", &[("name", &name)])),
+            Ok(()) => {
+                self.announce(tf("transcript.saved", &[("name", &name)]));
+                self.cue(Cue::Success);
+            }
             Err(e) => self.show_error(tf("transcript.save_failed", &[("name", &name), ("error", &e)])),
         }
     }
@@ -1600,6 +1641,13 @@ impl SpeechApp {
         let label = tf("settings.parts", &[("count", &speech::format_count(speech::PART_CHARS))]);
         if dropdown(ui, "parts", &label, &part_options, &mut pindex, true) {
             self.settings.announce_parts = pindex == 1;
+            self.settings.save();
+        }
+
+        let sound_options = vec![t("settings.sounds_on"), t("settings.sounds_off")];
+        let mut sindex = usize::from(!self.settings.sounds);
+        if dropdown(ui, "sounds", &t("settings.sounds"), &sound_options, &mut sindex, true) {
+            self.settings.sounds = sindex == 0;
             self.settings.save();
         }
 
