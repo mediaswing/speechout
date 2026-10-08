@@ -1,0 +1,76 @@
+[package]
+name = "speechout"
+version = "2.0.0"
+edition = "2024"
+description = "Speech Output Engine: an accessible text-to-speech reader for documents and images"
+license = "GPL-3.0-or-later"
+readme = "README.md"
+repository = "https://github.com/mediaswing/speechout"
+publish = false
+
+[[bin]]
+name = "speechout"
+path = "src/main.rs"
+
+[dependencies]
+eframe = { version = "0.36", default-features = false, features = ["accesskit", "default_fonts", "glow", "wayland", "x11"] }
+egui = "0.36"
+rodio = { version = "0.22", default-features = false, features = ["playback", "mp3", "wav", "symphonia-mp3", "symphonia-wav"] }
+ureq = { version = "3", default-features = false, features = ["rustls", "json"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+pdf-extract = "0.12"
+quick-xml = "0.42"
+zip = { version = "8", default-features = false, features = ["deflate"] }
+rfd = "0.17"
+hound = "3.5"
+mp3lame-encoder = "0.2"
+kamadak-exif = "0.6"
+image = { version = "0.25", default-features = false, features = ["jpeg"] }
+dirs = "7"
+regex = "1"
+base64 = "0.23"
+tempfile = "3"
+log = "0.4"
+anyhow = "1"
+whisper-rs = { version = "0.16", features = ["log_backend", "raw-api"] }
+
+[features]
+# Windows only: decode HEIC photos with libheif and libde265 built into the
+# app, so the Microsoft Store add-ons are not needed. Needs libheif installed
+# with vcpkg; see CONTRIBUTING.md. Release builds turn this on.
+bundled-heif = ["dep:libheif-rs"]
+
+# Speaker diarization (who is speaking) for transcripts. Linked statically,
+# except on Windows, where the prebuilt static library uses the static C
+# runtime (/MT) and everything else here the DLL one (/MD), which can't be
+# linked together. There it comes as DLLs beside the exe instead.
+[target.'cfg(not(windows))'.dependencies]
+sherpa-onnx-sys = "1.13.8"
+
+[target.'cfg(windows)'.dependencies]
+sherpa-onnx-sys = { version = "1.13.8", default-features = false, features = ["shared"] }
+libheif-rs = { version = "3", optional = true }
+winreg = "0.56"
+windows = { version = "0.62", features = [
+    "Foundation",
+    "Foundation_Collections",
+    "Media_Core",
+    "Media_SpeechSynthesis",
+    "Storage_Streams",
+    "Win32_Foundation",
+    "Win32_Graphics_Imaging",
+    "Win32_System_Com",
+    "Win32_UI_Shell",
+    "Win32_UI_WindowsAndMessaging",
+] }
+windows-future = "0.3"
+
+[target.'cfg(all(unix, not(target_os = "macos")))'.dependencies]
+tar = "0.4"
+flate2 = "1"
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = true

@@ -1,0 +1,219 @@
+# Builds the three release downloads when a version tag (for example v0.1.0)
+# is pushed, and publishes them on a GitHub release whose text comes from the
+# matching section of CHANGELOG.md. Each download is first submitted to
+# VirusTotal, and a table of scan links is added to the release notes.
+#
+# Requires the repository secret VT_API_KEY (a VirusTotal API key).
+#
+# Packaging:
+#   * macOS: `speechout --package-macos dist` (src/platform/macos.rs) builds the
+#     .app bundle, signs it ad hoc and zips it.
+#   * Linux: `speechout --package-deb dist` (src/platform/linux.rs) writes the .deb,
+#     which the linux job renames to use hyphens instead of underscores.
+#   * Windows: a PowerShell step in the windows job zips the exe with the
+#     sherpa-onnx DLLs (speaker labelling) and the Visual C++ runtime DLLs it
+#     imports.
+
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  # Build whisper.cpp (speech recognition) for the processor features most
+  # computers have (AVX2 on PCs), not for the build machine's own processor,
+  # which may have features that users' computers lack.
+  GGML_NATIVE: "OFF"
+
+jobs:
+  windows:
+    name: Windows (x86_64)
+    runs-on: windows-latest
+    env:
+      # libheif and libde265 are built into speechout.exe (the bundled-heif
+      # feature), so HEIC photos need no Microsoft Store add-ons.
+      VCPKGRS_TRIPLET: x64-windows-static-md
+      VCPKG_DEFAULT_BINARY_CACHE: ${{ github.workspace }}\vcpkg-cache
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2.9.2
+      - uses: actions/cache@v6.1.0
+        with:
+          path: vcpkg-cache
+          key: vcpkg-libheif-${{ hashFiles('Cargo.lock') }}
+          restore-keys: vcpkg-libheif-
+      # The runner image includes vcpkg.
+      - name: Install libheif with vcpkg
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force $env:VCPKG_DEFAULT_BINARY_CACHE | Out-Null
+          & "$env:VCPKG_INSTALLATION_ROOT\vcpkg.exe" install "libheif[core]:x64-windows-static-md" --disable-metrics
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          "VCPKG_ROOT=$env:VCPKG_INSTALLATION_ROOT" >> $env:GITHUB_ENV
+      - run: cargo test --locked --features bundled-heif
+      - run: cargo build --release --locked --features bundled-heif
+      # Zip the exe with the sherpa-onnx DLLs, which its build copies into
+      # target\release, and the Visual C++ runtime DLLs it uses, so it runs on
+      # PCs without the Visual C++ Redistributable. The runtime list comes
+      # from the exe's own imports; DLLs that are part of Windows are not
+      # copied.
+      - name: Zip the exe with its DLLs
+        shell: pwsh
+        run: |
+          $vs = & "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe" -latest -products * -property installationPath
+          $dumpbin = Get-ChildItem "$vs\VC\Tools\MSVC\*\bin\Hostx64\x64\dumpbin.exe" | Select-Object -Last 1
+          $crt = Get-ChildItem "$vs\VC\Redist\MSVC\*\x64\Microsoft.VC*.CRT" -Directory | Select-Object -Last 1
+          if (-not $dumpbin -or -not $crt) { throw "Visual C++ tools or runtime not found under $vs" }
+          $imports = & $dumpbin.FullName /nologo /dependents target\release\speechout.exe |
+            ForEach-Object { $_.Trim() } | Where-Object { $_ -like '*.dll' }
+          $dlls = $imports | ForEach-Object { Join-Path $crt.FullName $_ } | Where-Object { Test-Path $_ }
+          if (-not $dlls) { throw "No Visual C++ runtime DLLs found in the exe's imports: $($imports -join ', ')" }
+          $sherpa = 'sherpa-onnx-c-api.dll', 'onnxruntime.dll', 'onnxruntime_providers_shared.dll' |
+            ForEach-Object { Join-Path target\release $_ }
+          $missing = $sherpa | Where-Object { -not (Test-Path $_) }
+          if ($missing) { throw "sherpa-onnx DLLs missing from target\release: $($missing -join ', ')" }
+          $version = $env:GITHUB_REF_NAME.TrimStart('v')
+          $folder = "speechout-$version-windows-x86_64"
+          New-Item -ItemType Directory -Force "stage\$folder", dist | Out-Null
+          Copy-Item -Path (@('target\release\speechout.exe') + $sherpa + $dlls) -Destination "stage\$folder"
+          Write-Host "Packaged:" (Get-ChildItem "stage\$folder").Name
+          Compress-Archive -Path "stage\$folder" -DestinationPath "dist\$folder.zip"
+      - uses: actions/upload-artifact@v7.0.1
+        with:
+          name: windows
+          path: dist/*.zip
+          if-no-files-found: error
+
+  linux:
+    name: Ubuntu .deb (amd64)
+    # The oldest supported Ubuntu LTS, so the package installs on 22.04 and later.
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: awalsh128/cache-apt-pkgs-action@v1.6.3
+        with:
+          packages: >-
+            pkg-config libasound2-dev libxkbcommon-dev libwayland-dev
+            libgl1-mesa-dev libx11-dev libxcursor-dev libxrandr-dev libxi-dev
+          version: 1
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2.9.2
+      - run: cargo test --locked
+      - run: cargo build --release --locked
+      - run: target/release/speechout --package-deb dist
+      # Debian names the file speechout_<version>_<arch>.deb; use hyphens to
+      # match the Windows and macOS downloads.
+      - name: Rename the .deb with hyphens
+        run: |
+          for f in dist/*.deb; do
+            mv "$f" "dist/$(basename "$f" | tr _ -)"
+          done
+          ls dist
+      - uses: actions/upload-artifact@v7.0.1
+        with:
+          name: linux
+          path: dist/*.deb
+          if-no-files-found: error
+
+  macos:
+    name: macOS .app (Apple Silicon)
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin
+      - uses: Swatinem/rust-cache@v2.9.2
+      - run: cargo test --locked
+      - run: cargo build --release --locked --target aarch64-apple-darwin
+      - run: target/aarch64-apple-darwin/release/speechout --package-macos dist
+      - uses: actions/upload-artifact@v7.0.1
+        with:
+          name: macos
+          path: dist/*.zip
+          if-no-files-found: error
+
+  release:
+    name: Publish release
+    needs: [windows, linux, macos]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - name: Read release notes from CHANGELOG.md
+        uses: ffurrer2/extract-release-notes@v3.1.0
+        with:
+          release_notes_file: changelog-notes.md
+      - uses: actions/download-artifact@v8.0.1
+        with:
+          path: artifacts
+          merge-multiple: true
+      # Scan before publishing so the results can go into the release notes.
+      # A VirusTotal outage must not block a release, so failures are allowed
+      # and the scan table is simply left out.
+      - name: Scan downloads with VirusTotal
+        id: virustotal
+        continue-on-error: true
+        uses: crazy-max/ghaction-virustotal@v5.0.0
+        with:
+          vt_api_key: ${{ secrets.VT_API_KEY }}
+          files: |
+            artifacts/*.deb
+            artifacts/*.zip
+          # The free VirusTotal API allows 4 requests a minute.
+          request_rate: 4
+      - name: Write release notes
+        uses: actions/github-script@v9.0.0
+        env:
+          SCAN_OUTCOME: ${{ steps.virustotal.outcome }}
+        with:
+          script: |
+            const fs = require('fs');
+            const path = require('path');
+            const crypto = require('crypto');
+
+            // The changelog section may be empty (or absent).
+            let notes = fs.existsSync('changelog-notes.md')
+              ? fs.readFileSync('changelog-notes.md', 'utf8').trim()
+              : '';
+
+            if (process.env.SCAN_OUTCOME === 'success') {
+              const platform = (name) =>
+                name.includes('-windows-') ? 'Windows' :
+                name.endsWith('.deb') ? 'Ubuntu' :
+                name.includes('-macos-') ? 'Apple Silicon' : '';
+              const rows = fs.readdirSync('artifacts').sort().map((name) => {
+                const sha = crypto.createHash('sha256')
+                  .update(fs.readFileSync(path.join('artifacts', name)))
+                  .digest('hex');
+                // The permanent report for this exact file.
+                const url = `https://www.virustotal.com/gui/file/${sha}`;
+                return `| \`${name}\` (${platform(name)}) | \`${sha}\` | [View scan](${url}) |`;
+              });
+              const table = [
+                '## VirusTotal scans',
+                '',
+                '| Download | SHA-256 | Report |',
+                '| --- | --- | --- |',
+                ...rows,
+              ].join('\n');
+              notes = notes ? `${notes}\n\n${table}` : table;
+            } else {
+              core.warning('VirusTotal scan failed; publishing without scan results.');
+            }
+
+            fs.writeFileSync('release-notes.md', notes + '\n');
+      - uses: softprops/action-gh-release@v3.0.3
+        with:
+          body_path: release-notes.md
+          files: |
+            artifacts/*.deb
+            artifacts/*.zip
+          fail_on_unmatched_files: true

@@ -1,0 +1,50 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Example pronunciation wordlist for the Speech Output Engine.
+  Each entry respells a UK place name so that synthetic voices say it the
+  way local people do. Matching is whole-word and ignores case unless an
+  entry says case-sensitive="true".
+-->
+<wordlist name="UK place names" description="Respells UK place names that synthetic voices often get wrong" language="en-GB">
+  <entry match="Leicester" replace="Lester"/>
+  <entry match="Leicestershire" replace="Lestersher"/>
+  <entry match="Worcester" replace="Wooster"/>
+  <entry match="Worcestershire" replace="Woostersher"/>
+  <entry match="Gloucester" replace="Gloster"/>
+  <entry match="Gloucestershire" replace="Glostersher"/>
+  <entry match="Bicester" replace="Bister"/>
+  <entry match="Towcester" replace="Toaster"/>
+  <entry match="Warwick" replace="Worrick"/>
+  <entry match="Warwickshire" replace="Worricksher"/>
+  <entry match="Alnwick" replace="Annick"/>
+  <entry match="Berwick" replace="Berrick"/>
+  <entry match="Keswick" replace="Kezzick"/>
+  <entry match="Southwark" replace="Suthuck"/>
+  <entry match="Greenwich" replace="Grennich"/>
+  <entry match="Norwich" replace="Norritch"/>
+  <entry match="Harwich" replace="Harritch"/>
+  <entry match="Loughborough" replace="Luff-burra"/>
+  <entry match="Marylebone" replace="Marley-bun"/>
+  <entry match="Holborn" replace="Hoe-burn"/>
+  <entry match="Slough" replace="Slow"/>
+  <entry match="Reading" replace="Redding" case-sensitive="true"/>
+  <entry match="Shrewsbury" replace="Shroosbree"/>
+  <entry match="Edinburgh" replace="Edinburra"/>
+  <entry match="Mousehole" replace="Mowzel"/>
+  <entry match="Frome" replace="Froom"/>
+  <entry match="Belvoir" replace="Beaver"/>
+  <entry match="Happisburgh" replace="Haze-bruh"/>
+  <entry match="Wymondham" replace="Windum"/>
+  <entry match="Ruislip" replace="Rye-slip"/>
+  <entry match="Kidderminster" replace="Kidder-minster"/>
+  <entry match="Bromsgrove" replace="Bromz-grove"/>
+  <entry match="Solihull" replace="Solly-hull"/>
+  <entry match="Wolverhampton" replace="Wullver-hampton"/>
+  <entry match="Halesowen" replace="Hailz-owen"/>
+  <entry match="Lichfield" replace="Litch-field"/>
+  <entry match="Cholmondeley" replace="Chumley"/>
+  <entry match="Featherstonehaugh" replace="Fanshaw"/>
+  <entry match="Magdalen" replace="Maudlin"/>
+  <entry match="Pontypridd" replace="Ponty-preeth"/>
+  <entry match="Llanelli" replace="Thlan-ethli"/>
+</wordlist>

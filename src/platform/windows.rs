@@ -1,0 +1,307 @@
+//! Windows: system voices use the WinRT speech synthesiser (the same voices
+//! Narrator offers), HEIC conversion uses the Windows Imaging Component with the
+//! HEIF and HEVC Video Extensions from the Microsoft Store, and API keys are kept under
+//! HKEY_CURRENT_USER in the registry.
+
+use super::SecretStore;
+use crate::speech::Voice;
+use anyhow::{Context, bail};
+use std::path::Path;
+use windows::Media::SpeechSynthesis::{SpeechSynthesizer, VoiceInformation};
+use windows::Storage::Streams::DataReader;
+use windows::Win32::Foundation::GENERIC_READ;
+use windows::Win32::Graphics::Imaging::{
+    CLSID_WICImagingFactory, GUID_WICPixelFormat24bppBGR, IWICImagingFactory,
+    WICConvertBitmapSource, WICDecodeMetadataCacheOnDemand,
+};
+use windows::Win32::System::Com::{
+    CLSCTX_INPROC_SERVER, COINIT_MULTITHREADED, CoCreateInstance, CoInitializeEx,
+};
+use windows::Win32::UI::Shell::ShellExecuteW;
+use windows::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
+use windows::core::{HSTRING, w};
+use winreg::RegKey;
+use winreg::enums::{HKEY_CURRENT_USER, KEY_READ, KEY_WRITE};
+
+const REGISTRY_PATH: &str = r"Software\SpeechOut";
+
+/// Refuse to decode images larger than this many pixels (about 100 megapixels).
+const MAX_PIXELS: u64 = 100_000_000;
+
+pub const SECRET_STORE_DESCRIPTION: &str =
+    r"the Windows registry (HKEY_CURRENT_USER\Software\SpeechOut)";
+
+fn all_voices() -> windows::core::Result<Vec<VoiceInformation>> {
+    let list = SpeechSynthesizer::AllVoices()?;
+    let mut voices = Vec::new();
+    for i in 0..list.Size()? {
+        voices.push(list.GetAt(i)?);
+    }
+    Ok(voices)
+}
+
+pub fn system_voices() -> anyhow::Result<Vec<Voice>> {
+    let voices = all_voices().context("could not list Windows voices")?;
+    Ok(voices
+        .iter()
+        .filter_map(|v| {
+            let id = v.Id().ok()?.to_string();
+            let name = v.DisplayName().ok()?.to_string();
+            let language = v.Language().map(|l| l.to_string()).unwrap_or_default();
+            Some(Voice { id, name: format!("{name} ({language})") })
+        })
+        .collect())
+}
+
+pub fn synthesize(text: &str, voice_id: &str) -> anyhow::Result<Vec<u8>> {
+    let run = || -> windows::core::Result<Vec<u8>> {
+        let synth = SpeechSynthesizer::new()?;
+        if !voice_id.is_empty() {
+            let wanted = HSTRING::from(voice_id);
+            for voice in all_voices()? {
+                if voice.Id()? == wanted {
+                    synth.SetVoice(&voice)?;
+                    break;
+                }
+            }
+        }
+        let stream = synth.SynthesizeTextToStreamAsync(&HSTRING::from(text))?.join()?;
+        let size = u32::try_from(stream.Size()?).unwrap_or(u32::MAX);
+        let reader = DataReader::CreateDataReader(&stream.GetInputStreamAt(0)?)?;
+        reader.LoadAsync(size)?.join()?;
+        let mut bytes = vec![0u8; size as usize];
+        reader.ReadBytes(&mut bytes)?;
+        Ok(bytes)
+    };
+    run().context("the Windows speech synthesiser failed")
+}
+
+/// MF_E_TOPO_CODEC_NOT_FOUND: "No suitable transform was found to encode or
+/// decode the content."
+const CODEC_NOT_FOUND: u32 = 0xC00D_5212;
+
+/// The picture inside a HEIC file is compressed with HEVC, which Windows can
+/// only decode with HEVC Video Extensions, a separate add-on from the HEIF
+/// one. Without it, decoding fails with `CODEC_NOT_FOUND`.
+fn decode_error(e: windows::core::Error) -> anyhow::Error {
+    if e.code().0 as u32 == CODEC_NOT_FOUND {
+        log::warn!("HEIC decode failed: {e}");
+        anyhow::anyhow!(
+            "Windows needs \"HEVC Video Extensions\" from the Microsoft Store to open HEIC photos. \
+             Install it and try again"
+        )
+    } else {
+        e.into()
+    }
+}
+
+/// Converts a HEIC photo with the libheif built into the app, if this build
+/// has it, so no Store add-ons are needed. Falls back to Windows' own codecs.
+pub fn heic_to_jpeg(path: &Path) -> anyhow::Result<Vec<u8>> {
+    #[cfg(feature = "bundled-heif")]
+    match heic_with_libheif(path) {
+        Ok(jpeg) => return Ok(jpeg),
+        Err(e) => log::warn!("libheif could not convert the photo, trying Windows instead: {e:#}"),
+    }
+    heic_with_wic(path)
+}
+
+#[cfg(feature = "bundled-heif")]
+fn heic_with_libheif(path: &Path) -> anyhow::Result<Vec<u8>> {
+    use libheif_rs::{ColorSpace, HeifContext, LibHeif, RgbChroma};
+    let bytes = std::fs::read(path).context("the photo could not be read")?;
+    let context = HeifContext::read_from_bytes(&bytes)?;
+    let handle = context.primary_image_handle()?;
+    if u64::from(handle.width()) * u64::from(handle.height()) > MAX_PIXELS {
+        bail!("this image is too large to describe");
+    }
+    // Decoding applies the rotation and cropping stored in the file.
+    let image = LibHeif::new().decode(&handle, ColorSpace::Rgb(RgbChroma::Rgb), None)?;
+    let plane = image.planes().interleaved.context("libheif returned no pixels")?;
+    if plane.storage_bits_per_pixel != 24 {
+        bail!("libheif returned {} bits per pixel, not 24", plane.storage_bits_per_pixel);
+    }
+    // Rows can be padded, so copy each one without its padding.
+    let row = plane.width as usize * 3;
+    let mut rgb = Vec::with_capacity(row * plane.height as usize);
+    for line in plane.data.chunks(plane.stride).take(plane.height as usize) {
+        rgb.extend_from_slice(line.get(..row).context("libheif returned a short row")?);
+    }
+    let image = image::RgbImage::from_raw(plane.width, plane.height, rgb).context("invalid image data")?;
+    crate::vision::encode_jpeg(&image::DynamicImage::ImageRgb8(image))
+}
+
+/// Converts a HEIC photo with the Windows Imaging Component, which needs the
+/// HEIF Image Extensions and HEVC Video Extensions from the Microsoft Store.
+fn heic_with_wic(path: &Path) -> anyhow::Result<Vec<u8>> {
+    // SAFETY: plain COM calls on interfaces owned by this function. COM may
+    // already be initialised on this thread, which CoInitializeEx reports as a
+    // harmless error code that we ignore.
+    let (width, height, bgr) = unsafe {
+        let _ = CoInitializeEx(None, COINIT_MULTITHREADED);
+        let factory: IWICImagingFactory =
+            CoCreateInstance(&CLSID_WICImagingFactory, None, CLSCTX_INPROC_SERVER)
+                .context("Windows Imaging Component is unavailable")?;
+        let decoder = factory
+            .CreateDecoderFromFilename(
+                &HSTRING::from(path.as_os_str()),
+                None,
+                GENERIC_READ,
+                WICDecodeMetadataCacheOnDemand,
+            )
+            .context(
+                "Windows could not open this HEIC image. Install \"HEIF Image Extensions\" \
+                 from the Microsoft Store and try again.",
+            )?;
+        let frame = decoder.GetFrame(0).map_err(decode_error)?;
+        let source = WICConvertBitmapSource(&GUID_WICPixelFormat24bppBGR, &frame).map_err(decode_error)?;
+        let (mut width, mut height) = (0u32, 0u32);
+        source.GetSize(&mut width, &mut height)?;
+        if u64::from(width) * u64::from(height) > MAX_PIXELS || width == 0 || height == 0 {
+            bail!("this image is too large to describe");
+        }
+        let stride = width * 3;
+        let mut bgr = vec![0u8; stride as usize * height as usize];
+        source.CopyPixels(std::ptr::null(), stride, &mut bgr).map_err(decode_error)?;
+        (width, height, bgr)
+    };
+    let mut rgb = bgr;
+    for px in rgb.as_chunks_mut::<3>().0 {
+        px.swap(0, 2);
+    }
+    let image = image::RgbImage::from_raw(width, height, rgb).context("invalid image data")?;
+    crate::vision::encode_jpeg(&image::DynamicImage::ImageRgb8(image))
+}
+
+pub fn open_url(url: &str) -> anyhow::Result<()> {
+    // SAFETY: all strings are valid, NUL-terminated wide strings that outlive the call.
+    let result = unsafe {
+        ShellExecuteW(None, w!("open"), &HSTRING::from(url), None, None, SW_SHOWNORMAL)
+    };
+    // ShellExecute reports success with a value greater than 32.
+    if result.0 as usize <= 32 {
+        bail!("could not open the web browser");
+    }
+    Ok(())
+}
+
+/// Stops console programs such as winget flashing up a window.
+const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+
+/// Where the Ollama installer puts it for the current user.
+fn ollama_dir() -> Option<std::path::PathBuf> {
+    Some(dirs::data_local_dir()?.join("Programs").join("Ollama"))
+}
+
+fn ollama_exe() -> Option<std::path::PathBuf> {
+    let installed = ollama_dir().map(|d| d.join("ollama.exe")).filter(|p| p.is_file());
+    installed.or_else(|| {
+        let path = std::env::var_os("PATH")?;
+        std::env::split_paths(&path).map(|d| d.join("ollama.exe")).find(|p| p.is_file())
+    })
+}
+
+pub fn ollama_installed() -> bool {
+    ollama_exe().is_some()
+}
+
+fn winget() -> Option<std::path::PathBuf> {
+    let path = dirs::data_local_dir()?.join(r"Microsoft\WindowsApps\winget.exe");
+    path.exists().then_some(path)
+}
+
+pub fn package_manager() -> Option<&'static str> {
+    winget().map(|_| "winget")
+}
+
+/// Installs Ollama for the current user with winget, without any windows or
+/// prompts. Ollama's installer does not need administrator rights.
+pub fn install_ollama() -> anyhow::Result<()> {
+    use std::os::windows::process::CommandExt;
+    let winget = winget().context("winget is not available on this computer")?;
+    let output = std::process::Command::new(winget)
+        .args([
+            "install",
+            "--id",
+            "Ollama.Ollama",
+            "--exact",
+            "--silent",
+            "--accept-package-agreements",
+            "--accept-source-agreements",
+            "--disable-interactivity",
+        ])
+        .stdin(std::process::Stdio::null())
+        .creation_flags(CREATE_NO_WINDOW)
+        .output()
+        .context("could not run winget")?;
+    if !output.status.success() {
+        log::warn!(
+            "winget failed ({}): {}",
+            output.status,
+            String::from_utf8_lossy(&output.stdout).lines().rfind(|l| !l.trim().is_empty()).unwrap_or("")
+        );
+        bail!("winget could not install Ollama");
+    }
+    Ok(())
+}
+
+/// Starts Ollama's tray app, which runs the server in the background, or
+/// the server alone if the tray app is missing.
+pub fn start_ollama() -> anyhow::Result<()> {
+    use std::os::windows::process::CommandExt;
+    let tray = ollama_dir().map(|d| d.join("ollama app.exe")).filter(|p| p.is_file());
+    let mut command = match tray {
+        Some(tray) => std::process::Command::new(tray),
+        None => {
+            let mut c = std::process::Command::new(ollama_exe().context("Ollama is not installed")?);
+            c.arg("serve").creation_flags(CREATE_NO_WINDOW);
+            c
+        }
+    };
+    command
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .context("could not start Ollama")?;
+    Ok(())
+}
+
+pub fn secret_get(name: &str) -> SecretStore<Option<String>> {
+    let hkcu = RegKey::predef(HKEY_CURRENT_USER);
+    match hkcu.open_subkey_with_flags(REGISTRY_PATH, KEY_READ) {
+        Ok(key) => SecretStore::Ok(key.get_value::<String, _>(name).ok()),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => SecretStore::Ok(None),
+        Err(e) => {
+            log::warn!("registry read failed: {e}");
+            SecretStore::Unsupported
+        }
+    }
+}
+
+pub fn secret_set(name: &str, value: &str) -> SecretStore<()> {
+    let hkcu = RegKey::predef(HKEY_CURRENT_USER);
+    match hkcu
+        .create_subkey_with_flags(REGISTRY_PATH, KEY_READ | KEY_WRITE)
+        .and_then(|(key, _)| key.set_value(name, &value))
+    {
+        Ok(()) => SecretStore::Ok(()),
+        Err(e) => {
+            log::warn!("registry write failed: {e}");
+            SecretStore::Unsupported
+        }
+    }
+}
+
+pub fn secret_delete(name: &str) -> SecretStore<()> {
+    let hkcu = RegKey::predef(HKEY_CURRENT_USER);
+    match hkcu.open_subkey_with_flags(REGISTRY_PATH, KEY_READ | KEY_WRITE) {
+        Ok(key) => match key.delete_value(name) {
+            Ok(()) => SecretStore::Ok(()),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => SecretStore::Ok(()),
+            Err(_) => SecretStore::Unsupported,
+        },
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => SecretStore::Ok(()),
+        Err(_) => SecretStore::Unsupported,
+    }
+}
