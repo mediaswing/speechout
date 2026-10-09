@@ -10,6 +10,8 @@ the app.
 
 ## [Unreleased]
 
+## [2.2.0] - 2026-10-09
+
 ### Added
 
 - The Audio Player tab can now open a zip file of WAV and MP3 files and play
