@@ -85,13 +85,28 @@ pub fn synthesize(text: &str, voice_id: &str) -> anyhow::Result<Vec<u8>> {
         .stdin
         .take()
         .context("could not send text to the speech command")?
-        .write_all(text.as_bytes())?;
+        .write_all(without_embedded_commands(text).as_bytes())?;
     let result = child.wait_with_output()?;
     if !result.status.success() {
         log::warn!("say failed: {}", String::from_utf8_lossy(&result.stderr).trim());
         bail!("the macOS speech command failed");
     }
     Ok(std::fs::read(out.path())?)
+}
+
+/// The speech synthesiser obeys commands written between double brackets,
+/// such as `[[volm 0]]` (silence) or `[[slnc 5000]]` (a pause), so a document
+/// could change how it is read. Shrinking every run of opening brackets to one
+/// means no command can start, including `[[dlim]]`, which would change the
+/// brackets themselves.
+fn without_embedded_commands(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    for c in text.chars() {
+        if !(c == '[' && out.ends_with('[')) {
+            out.push(c);
+        }
+    }
+    out
 }
 
 pub fn heic_to_jpeg(path: &Path) -> anyhow::Result<Vec<u8>> {
@@ -289,6 +304,13 @@ fn info_plist() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn embedded_commands_are_neutralised() {
+        assert_eq!(without_embedded_commands("a [[volm 0]] b"), "a [volm 0]] b");
+        assert_eq!(without_embedded_commands("[[[slnc 5000]]"), "[slnc 5000]]");
+        assert_eq!(without_embedded_commands("[a] [ [b]"), "[a] [ [b]");
+    }
 
     #[test]
     fn parses_voice_listing() {

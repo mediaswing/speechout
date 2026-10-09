@@ -69,6 +69,24 @@ impl Tab {
     }
 }
 
+/// Where the text to read aloud comes from, chosen on the General tab.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Source {
+    File,
+    Paste,
+}
+
+impl Source {
+    const ALL: [Source; 2] = [Source::File, Source::Paste];
+
+    fn label(self) -> String {
+        match self {
+            Source::File => t("general.source_file"),
+            Source::Paste => t("general.source_paste"),
+        }
+    }
+}
+
 /// A zip file of audio open on the Audio Player tab.
 struct OpenPlaylist {
     zip: PathBuf,
@@ -109,7 +127,12 @@ pub struct SpeechApp {
     voices: HashMap<Provider, Loadable<Vec<Voice>>>,
     models: Option<Loadable<Vec<String>>>,
     file: Option<PathBuf>,
+    /// Text read from the chosen file.
     text: String,
+    source: Source,
+    /// The text box as typed or pasted, and the cleaned text read aloud.
+    pasted: String,
+    pasted_text: String,
     loading_file: bool,
     /// A photo chosen before a local AI model was found, to describe once
     /// the check for Ollama finishes.
@@ -186,6 +209,9 @@ impl SpeechApp {
             models: None,
             file: None,
             text: String::new(),
+            source: Source::File,
+            pasted: String::new(),
+            pasted_text: String::new(),
             loading_file: false,
             waiting_photo: None,
             setting_up_ollama: false,
@@ -279,13 +305,22 @@ impl SpeechApp {
         self.announce(msg);
     }
 
+    /// The text that will be read aloud: from the file, or from the text box.
+    fn current_text(&self) -> &str {
+        match self.source {
+            Source::File => &self.text,
+            Source::Paste => &self.pasted_text,
+        }
+    }
+
     fn copy_text(&mut self, ctx: &egui::Context) {
-        if self.text.is_empty() {
+        let text = self.current_text().to_owned();
+        if text.is_empty() {
             self.announce(t("copy.nothing"));
             return;
         }
-        ctx.copy_text(self.text.clone());
-        let words = self.text.split_whitespace().count();
+        let words = text.split_whitespace().count();
+        ctx.copy_text(text);
         self.announce(tf("copy.done", &[("count", &words)]));
     }
 
@@ -473,6 +508,7 @@ impl SpeechApp {
                             let words = text.split_whitespace().count();
                             self.text = text;
                             self.file = Some(path);
+                            self.source = Source::File;
                             self.announce(tf(
                                 "file.loaded",
                                 &[("name", &name), ("count", &words), ("key_name", &MOD_KEY.1)],
@@ -748,12 +784,16 @@ impl SpeechApp {
         if self.is_busy() {
             return None;
         }
-        if self.text.trim().is_empty() {
-            self.announce(tf("read.nothing", &[("key_name", &MOD_KEY.1)]));
+        if self.current_text().trim().is_empty() {
+            let msg = match self.source {
+                Source::File => tf("read.nothing", &[("key_name", &MOD_KEY.1)]),
+                Source::Paste => t("read.nothing_pasted"),
+            };
+            self.announce(msg);
             return None;
         }
         let subs = Substitutions::new(&self.wordlists, &self.settings.disabled_wordlists);
-        let text = crate::spoken::apply(&subs.apply(&self.text));
+        let text = crate::spoken::apply(&subs.apply(self.current_text()));
         self.job_for(text)
     }
 
@@ -855,9 +895,8 @@ impl SpeechApp {
             return;
         }
         let format = self.settings.audio_format;
-        let stem = self
-            .file
-            .as_ref()
+        let file = if self.source == Source::File { self.file.as_ref() } else { None };
+        let stem = file
             .and_then(|f| f.file_stem())
             .map(|s| s.to_string_lossy().into_owned())
             .unwrap_or_else(|| t("save.default_name"));
@@ -1658,15 +1697,47 @@ impl SpeechApp {
     fn general_tab(&mut self, ui: &mut Ui) {
         heading(ui, &t("general.heading"));
 
-        let mut file_text = match (&self.file, self.loading_file) {
-            (_, true) => t("general.loading"),
-            (Some(p), _) => p.display().to_string(),
-            (None, _) => t("general.no_file"),
-        };
-        text_field(ui, &t("general.current_file"), &mut file_text, false);
+        let labels: Vec<String> = Source::ALL.iter().map(|s| s.label()).collect();
+        let mut sindex = Source::ALL.iter().position(|s| *s == self.source).unwrap_or(0);
+        if dropdown(ui, "source", &t("general.source"), &labels, &mut sindex, !self.is_busy()) {
+            self.source = Source::ALL[sindex];
+            self.announce(match self.source {
+                Source::File => tf("general.source_chosen_file", &[("key_name", &MOD_KEY.1)]),
+                Source::Paste => t("general.source_chosen_paste"),
+            });
+        }
 
-        if full_button(ui, &tf("general.choose_file", &[("key", &MOD_KEY.0)]), !self.loading_file).clicked() {
-            self.choose_file();
+        match self.source {
+            Source::File => {
+                let mut file_text = match (&self.file, self.loading_file) {
+                    (_, true) => t("general.loading"),
+                    (Some(p), _) => p.display().to_string(),
+                    (None, _) => t("general.no_file"),
+                };
+                text_field(ui, &t("general.current_file"), &mut file_text, false);
+
+                let label = tf("general.choose_file", &[("key", &MOD_KEY.0)]);
+                if full_button(ui, &label, !self.loading_file).clicked() {
+                    self.choose_file();
+                }
+            }
+            Source::Paste => {
+                let label = ui.label(t("general.pasted"));
+                let enabled = !self.is_busy();
+                let edit = egui::TextEdit::multiline(&mut self.pasted)
+                    .id_salt("pasted_text")
+                    .char_limit(crate::document::MAX_PASTED_CHARS)
+                    .desired_width(f32::INFINITY)
+                    .desired_rows(10);
+                let resp = ui.add_enabled(enabled, edit).labelled_by(label.id);
+                if resp.changed() {
+                    self.pasted_text = crate::document::clean_pasted(&self.pasted);
+                    if self.pasted.chars().count() >= crate::document::MAX_PASTED_CHARS {
+                        let count = speech::format_count(crate::document::MAX_PASTED_CHARS);
+                        self.announce(tf("general.pasted_full", &[("count", &count)]));
+                    }
+                }
+            }
         }
 
         // Speech service.
@@ -1725,7 +1796,7 @@ impl SpeechApp {
             self.preview_voice();
         }
 
-        let has_text = !self.text.is_empty();
+        let has_text = !self.current_text().is_empty();
         let speaking = matches!(self.job, Some((JobKind::Speaking, _)));
         if full_button(ui, &t("general.read_aloud"), has_text && !self.is_busy()).clicked() {
             self.read_aloud();

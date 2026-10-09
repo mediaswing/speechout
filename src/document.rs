@@ -1186,6 +1186,35 @@ fn parse_csv(text: &str, delimiter: char) -> Vec<Vec<String>> {
     records
 }
 
+/// Most characters that may be typed or pasted into the text box, about 30,000
+/// words. Keeps the box responsive and cloud costs bounded.
+pub const MAX_PASTED_CHARS: usize = 200_000;
+
+/// Cleans text typed or pasted into the app before it is read aloud: cut to
+/// `MAX_PASTED_CHARS`, stripped of invisible characters that can hide words or
+/// reorder how text is shown, then tidied like text from a file.
+pub fn clean_pasted(text: &str) -> String {
+    // Windows puts "\r\n" at the end of each line it copies, which `tidy`
+    // would otherwise take as a paragraph break.
+    let visible: String = text
+        .chars()
+        .take(MAX_PASTED_CHARS)
+        .filter(|c| !is_hidden_format(*c))
+        .collect::<String>()
+        .replace("\r\n", "\n");
+    tidy(&visible)
+}
+
+/// Zero-width spaces, byte order marks, bidirectional embeddings, overrides
+/// and isolates, and interlinear annotations. Joiners are kept, because emoji
+/// and some scripts need them.
+fn is_hidden_format(c: char) -> bool {
+    matches!(
+        c,
+        '\u{200B}' | '\u{2060}' | '\u{FEFF}' | '\u{202A}'..='\u{202E}' | '\u{2066}'..='\u{2069}' | '\u{FFF9}'..='\u{FFFB}'
+    )
+}
+
 /// Normalises whitespace: joins lines broken mid-sentence by PDF layout while
 /// keeping paragraph breaks, and drops control characters.
 fn tidy(text: &str) -> String {
@@ -1569,5 +1598,20 @@ mod tests {
         assert_eq!(FileKind::from_path(Path::new("a.ppt")), Some(FileKind::Ppt));
         assert_eq!(FileKind::from_path(Path::new("a.heic")), Some(FileKind::Image));
         assert_eq!(FileKind::from_path(Path::new("a.exe")), None);
+    }
+
+    #[test]
+    fn pasted_text_is_cleaned() {
+        let pasted = "\u{FEFF}Fish\u{200B} &\u{0}\u{7} chips\r\nare \u{202E}tsaf\u{202C}\r\n\r\n\u{1b}[31mnext\tpara";
+        assert_eq!(clean_pasted(pasted), "Fish & chips are tsaf\n\n[31mnext para");
+        // Joiners in emoji survive.
+        assert_eq!(clean_pasted("a \u{1F469}\u{200D}\u{1F4BB} b"), "a \u{1F469}\u{200D}\u{1F4BB} b");
+        assert_eq!(clean_pasted(" \u{200B}\n\n "), "");
+    }
+
+    #[test]
+    fn pasted_text_is_limited() {
+        let long = "ab ".repeat(MAX_PASTED_CHARS);
+        assert!(clean_pasted(&long).chars().count() <= MAX_PASTED_CHARS);
     }
 }

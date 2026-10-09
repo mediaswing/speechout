@@ -10,6 +10,22 @@ the app.
 
 ## [Unreleased]
 
+### Added
+
+- The General tab has a new "Text to read" list. Choose "Paste Text" to type
+  or paste text into a box and read it aloud or save it as audio, without
+  making a file first. Choose "Choose File" to read a file as before. Choosing
+  a file with Ctrl+O (Cmd+O on a Mac) switches back to "Choose File". Pasted
+  text is limited to 200,000 characters, and invisible characters that could
+  hide or reorder words are removed before it is read.
+
+### Fixed
+
+- On a Mac, text between double square brackets, such as `[[volm 0]]`, was
+  taken by the system voice as a command, so a document could silence the
+  voice, add long pauses or change how it spoke. Now it is read as ordinary
+  text.
+
 ## [2.2.0] - 2026-10-09
 
 ### Added
