@@ -14,6 +14,7 @@
 
 use crate::audio::{AudioFormat, Cue, Listened, SoundKind};
 use crate::i18n::{self, Language, Translation, t, tf};
+use crate::playlist::Playlist;
 use crate::settings::Settings;
 use crate::speech::{self, Provider, Voice};
 use crate::speakers::SpeakerLabels;
@@ -66,6 +67,17 @@ impl Tab {
     fn id(self) -> Id {
         Id::new(("tab", self as u8))
     }
+}
+
+/// A zip file of audio open on the Audio Player tab.
+struct OpenPlaylist {
+    zip: PathBuf,
+    list: Playlist,
+    /// The track chosen, counting from 0.
+    current: usize,
+    /// The first track has been opened, and asked to download the models for
+    /// transcribing if they were missing. Later tracks don't ask again.
+    offered_models: bool,
 }
 
 enum Loadable<T> {
@@ -127,6 +139,14 @@ pub struct SpeechApp {
     audio_player: Option<Arc<Control>>,
     audio_paused: bool,
     audio_position: Duration,
+    /// The playlist the audio file is a track of.
+    playlist: Option<OpenPlaylist>,
+    /// Play the audio file as soon as it has opened, as when one track of a
+    /// playlist follows another.
+    play_when_loaded: bool,
+    /// Transcribe the audio file once the track before it, in a playlist,
+    /// has stopped being transcribed.
+    transcribe_when_free: bool,
     /// Transcribe the audio file once the Whisper model has downloaded.
     transcribe_after_download: bool,
     cues: crate::audio::Cues,
@@ -185,6 +205,9 @@ impl SpeechApp {
             audio_player: None,
             audio_paused: false,
             audio_position: Duration::ZERO,
+            playlist: None,
+            play_when_loaded: false,
+            transcribe_when_free: false,
             transcribe_after_download: false,
             cues: crate::audio::Cues::default(),
         };
@@ -461,6 +484,7 @@ impl SpeechApp {
                 }
                 Msg::Translated(result) => self.translated(result),
                 Msg::AudioLoaded(path, result) => self.audio_loaded(path, result),
+                Msg::PlaylistOpened(path, result) => self.playlist_opened(path, result),
                 Msg::AudioPosition(position) => {
                     if self.audio_player.is_some() {
                         self.audio_position = position;
@@ -471,10 +495,17 @@ impl SpeechApp {
                     self.audio_paused = false;
                     self.audio_position = Duration::ZERO;
                     match result {
-                        Ok(true) => self.announce(t("player.finished")),
-                        // Stopped because another file was chosen: that file
-                        // is being announced instead.
-                        Ok(false) if self.audio_loader.is_some() => {}
+                        // Stopped because another file or track was chosen:
+                        // that is being announced instead.
+                        Ok(_) if self.audio_loader.is_some() => {}
+                        Ok(true) => match &self.playlist {
+                            Some(p) if p.current + 1 < p.list.tracks.len() => {
+                                let next = p.current + 1;
+                                self.open_track(next, true, String::new());
+                            }
+                            Some(_) => self.announce(t("playlist.finished")),
+                            None => self.announce(t("player.finished")),
+                        },
                         Ok(false) => self.announce(t("player.stopped")),
                         Err(e) => self.show_error(tf("player.play_failed", &[("error", &e)])),
                     }
@@ -1133,7 +1164,7 @@ impl SpeechApp {
         }
         let Some(path) = rfd::FileDialog::new()
             .set_title(t("player.dialog_title"))
-            .add_filter(t("player.filter"), &["wav", "mp3"])
+            .add_filter(t("player.filter"), &["wav", "mp3", "zip"])
             .pick_file()
         else {
             return;
@@ -1143,35 +1174,148 @@ impl SpeechApp {
         }
         let control = Arc::new(Control::default());
         self.audio_loader = Some(control.clone());
-        self.announce(tf("player.opening", &[("name", &file_name(&path))]));
+        self.play_when_loaded = false;
+        let name = file_name(&path);
+        if crate::playlist::is_zip(&path) {
+            self.announce(tf("playlist.unpacking", &[("name", &name)]));
+            self.rep.spawn(move |rep| worker::open_playlist(rep, control, path));
+        } else {
+            self.announce(tf("player.opening", &[("name", &name)]));
+            self.rep.spawn(move |rep| worker::load_audio(rep, control, path));
+        }
+    }
+
+    fn playlist_opened(&mut self, zip: PathBuf, result: Result<Option<Playlist>, String>) {
+        self.audio_loader = None;
+        let name = file_name(&zip);
+        let list = match result {
+            Ok(Some(list)) => list,
+            Ok(None) => return self.announce(tf("player.open_stopped", &[("name", &name)])),
+            Err(e) => return self.show_error(tf("file.load_failed", &[("name", &name), ("error", &e)])),
+        };
+        let count = list.tracks.len();
+        let mut intro = if count == 1 {
+            tf("playlist.opened_one", &[("name", &name)])
+        } else {
+            tf("playlist.opened", &[("name", &name), ("count", &count)])
+        };
+        match list.missing.len() {
+            0 => {}
+            1 => intro = format!("{intro} {}", t("playlist.missing_one")),
+            n => intro = format!("{intro} {}", tf("playlist.missing", &[("count", &n)])),
+        }
+        if !list.missing.is_empty() {
+            log::warn!("listing.txt names files that are not WAV or MP3 files in the zip: {:?}", list.missing);
+        }
+        self.audio = None;
+        self.audio_position = Duration::ZERO;
+        self.transcript.clear();
+        self.playlist = Some(OpenPlaylist { zip, list, current: 0, offered_models: false });
+        self.open_track(0, false, intro);
+    }
+
+    /// Opens track `index` of the playlist (counting from 0), stopping the
+    /// track before it, and plays it once it has opened if `play` is true.
+    /// `intro` is said first.
+    fn open_track(&mut self, index: usize, play: bool, intro: String) {
+        if self.audio_loader.is_some() {
+            return;
+        }
+        let Some(playlist) = &mut self.playlist else { return };
+        let Some(path) = playlist.list.tracks.get(index).cloned() else { return };
+        playlist.current = index;
+        let count = playlist.list.tracks.len();
+        if let Some(control) = &self.audio_player {
+            control.stop();
+        }
+        // Its transcript would be of the track before.
+        if let Some((JobKind::Transcribing, control)) = &self.job {
+            control.stop();
+        }
+        let control = Arc::new(Control::default());
+        self.audio_loader = Some(control.clone());
+        self.play_when_loaded = play;
+        let opening = tf("playlist.opening", &[("number", &(index + 1)), ("count", &count), ("name", &file_name(&path))]);
+        self.announce(format!("{intro} {opening}").trim().to_owned());
         self.rep.spawn(move |rep| worker::load_audio(rep, control, path));
+    }
+
+    /// Moves to the next track of the playlist, or the one before. It plays
+    /// if the track it replaces was playing.
+    fn change_track(&mut self, forward: bool) {
+        let Some(playlist) = &self.playlist else { return };
+        let index = if forward { playlist.current + 1 } else { playlist.current.wrapping_sub(1) };
+        if index >= playlist.list.tracks.len() {
+            self.announce(if forward { t("playlist.at_last") } else { t("playlist.at_first") });
+            return;
+        }
+        let play = self.audio_player.is_some() && !self.audio_paused;
+        self.open_track(index, play, String::new());
     }
 
     fn audio_loaded(&mut self, path: PathBuf, result: Result<Option<Arc<Listened>>, String>) {
         self.audio_loader = None;
+        let play = std::mem::take(&mut self.play_when_loaded);
         let name = file_name(&path);
         let audio = match result {
             Ok(Some(audio)) => audio,
             Ok(None) => return self.announce(tf("player.open_stopped", &[("name", &name)])),
             Err(e) => return self.show_error(tf("file.load_failed", &[("name", &name), ("error", &e)])),
         };
+        // A file chosen on its own replaces the playlist.
+        if self.playlist.as_ref().is_some_and(|p| !p.list.tracks.contains(&path)) {
+            self.playlist = None;
+        }
         self.audio_position = Duration::ZERO;
         self.transcript.clear();
         self.audio = Some((path, audio.clone()));
-        let mut intro = tf("player.loaded", &[("name", &name), ("length", &spoken_duration(audio.duration))]);
+        let playing = play && self.start_playing();
+        let length = spoken_duration(audio.duration);
+        let mut intro = match &self.playlist {
+            Some(p) => {
+                let key = if playing { "playlist.playing" } else { "playlist.loaded" };
+                let count = p.list.tracks.len();
+                tf(key, &[("number", &(p.current + 1)), ("count", &count), ("name", &name), ("length", &length)])
+            }
+            None => tf("player.loaded", &[("name", &name), ("length", &length)]),
+        };
         if audio.sound == SoundKind::Speech {
             if audio.cut_short {
                 intro = format!("{intro} {}", t("player.cut_short"));
             }
-            return self.transcribe_audio(format!("{intro} {}", t("player.speech")));
+            // In a playlist, only the first track offers to download the
+            // models for transcribing, so the questions don't keep coming up.
+            let may_ask = match &mut self.playlist {
+                Some(p) => !std::mem::replace(&mut p.offered_models, true),
+                None => true,
+            };
+            if may_ask || self.transcribing_models_ready() {
+                let intro = format!("{intro} {}", t("player.speech"));
+                // The track before is still being transcribed, and has been
+                // told to stop.
+                if matches!(self.job, Some((JobKind::Transcribing, _))) {
+                    self.transcribe_when_free = true;
+                    return self.announce(intro);
+                }
+                return self.transcribe_audio(intro);
+            }
         }
         let note = match audio.sound {
             SoundKind::Silent => t("player.silent"),
-            _ => tf("player.not_speech", &[("button", &t("player.transcribe"))]),
+            SoundKind::Speech => tf("playlist.not_transcribed", &[("button", &t("player.transcribe"))]),
+            SoundKind::Other if playing => String::new(),
+            SoundKind::Other => tf("player.not_speech", &[("button", &t("player.transcribe"))]),
         };
-        self.announce(format!("{intro} {note}"));
+        self.announce(format!("{intro} {note}").trim().to_owned());
         // Speech is transcribed next, and that gets the sound when it's done.
         self.cue(Cue::Success);
+    }
+
+    /// The models for transcribing, with the speakers labelled if that is
+    /// chosen, are on the computer.
+    fn transcribing_models_ready(&self) -> bool {
+        self.settings.whisper_model.is_downloaded()
+            && (self.settings.speaker_labels == SpeakerLabels::Off || crate::speakers::models_downloaded())
     }
 
     /// Plays the audio file from where it was left, or resumes it if paused.
@@ -1182,13 +1326,27 @@ impl SpeechApp {
             }
             return;
         }
-        let Some((path, audio)) = &self.audio else {
+        if self.audio.is_none() {
+            // A playlist whose track didn't open, such as when Escape was
+            // pressed while it was opening.
+            if let Some(p) = &self.playlist {
+                return self.open_track(p.current, true, String::new());
+            }
             self.announce(tf("player.nothing", &[("key_name", &MOD_KEY.1)]));
             return;
-        };
+        }
+        if self.start_playing() {
+            self.announce(t("player.playing"));
+        }
+    }
+
+    /// Starts the audio file playing from where it was left. Returns false,
+    /// having said why, if it can't.
+    fn start_playing(&mut self) -> bool {
+        let Some((path, audio)) = &self.audio else { return false };
         if matches!(self.job, Some((JobKind::Speaking | JobKind::Previewing, _))) {
             self.announce(t("player.reading_aloud"));
-            return;
+            return false;
         }
         // Start again from the beginning if the last play reached the end.
         let start = if self.audio_position + Duration::from_millis(500) >= audio.duration {
@@ -1202,8 +1360,8 @@ impl SpeechApp {
         self.audio_player = Some(control.clone());
         self.audio_paused = false;
         self.audio_position = start;
-        self.announce(t("player.playing"));
         self.rep.spawn(move |rep| worker::play_audio(rep, control, path, start));
+        true
     }
 
     fn toggle_audio_pause(&mut self) {
@@ -1335,6 +1493,18 @@ impl SpeechApp {
 
     fn transcribed(&mut self, path: PathBuf, result: Result<Option<worker::Transcript>, String>) {
         self.job = None;
+        // A track of a playlist that has since been left, which was told to
+        // stop. The track now chosen may be waiting its turn.
+        let current = self.audio_loader.is_none() && self.audio.as_ref().is_some_and(|(p, _)| *p == path);
+        if self.playlist.is_some() && !current {
+            if let Err(e) = result {
+                log::warn!("transcribing the track before failed: {e}");
+            }
+            if std::mem::take(&mut self.transcribe_when_free) {
+                self.transcribe_audio(String::new());
+            }
+            return;
+        }
         let name = file_name(&path);
         match result {
             Ok(None) => self.announce(t("transcript.stopped")),
@@ -1816,15 +1986,41 @@ impl SpeechApp {
         heading(ui, &t("player.heading"));
         let transcribing = matches!(self.job, Some((JobKind::Transcribing, _)));
 
-        let mut file_text = match (&self.audio, self.audio_loader.is_some()) {
-            (_, true) => t("general.loading"),
-            (Some((p, _)), _) => p.display().to_string(),
-            (None, _) => t("general.no_file"),
+        let mut file_text = match (&self.audio, &self.playlist, self.audio_loader.is_some()) {
+            (_, _, true) => t("general.loading"),
+            (_, Some(p), _) => tf(
+                "playlist.current_file",
+                &[
+                    ("zip", &p.zip.display()),
+                    ("number", &(p.current + 1)),
+                    ("count", &p.list.tracks.len()),
+                    ("name", &file_name(&p.list.tracks[p.current])),
+                ],
+            ),
+            (Some((p, _)), _, _) => p.display().to_string(),
+            (None, _, _) => t("general.no_file"),
         };
         text_field(ui, &t("general.current_file"), &mut file_text, false);
         let label = tf("player.choose", &[("key", &MOD_KEY.0)]);
         if full_button(ui, &label, self.audio_loader.is_none() && !transcribing).clicked() {
             self.choose_audio();
+        }
+        if let Some(p) = &self.playlist {
+            let tracks: Vec<String> = p
+                .list
+                .tracks
+                .iter()
+                .enumerate()
+                .map(|(i, track)| tf("playlist.track", &[("number", &(i + 1)), ("name", &file_name(track))]))
+                .collect();
+            let current = p.current;
+            let mut index = current;
+            if dropdown(ui, "track", &t("playlist.label"), &tracks, &mut index, self.audio_loader.is_none())
+                && index != current
+            {
+                let play = self.audio_player.is_some() && !self.audio_paused;
+                self.open_track(index, play, String::new());
+            }
         }
 
         if let Some((_, audio)) = &self.audio {
@@ -1856,6 +2052,15 @@ impl SpeechApp {
         }
         if full_button(ui, &t("player.forward"), has_audio).clicked() {
             self.skip_audio(10.0);
+        }
+        if self.playlist.is_some() {
+            let can_change = self.audio_loader.is_none();
+            if full_button(ui, &t("playlist.previous"), can_change).clicked() {
+                self.change_track(false);
+            }
+            if full_button(ui, &t("playlist.next"), can_change).clicked() {
+                self.change_track(true);
+            }
         }
 
         ui.add_space(8.0);

@@ -10,6 +10,14 @@ the app.
 
 ## [Unreleased]
 
+### Added
+
+- The Audio Player tab can now open a zip file of WAV and MP3 files and play
+  them as a playlist, one after another. A `listing.txt` file in the zip sets
+  the order, with one file name on each line; without one, the files play in
+  order of name. Choose a track from the new "Track" list, or move between
+  them with the "Previous track" and "Next track" buttons.
+
 ## [2.1.0] - 2026-10-08
 
 ### Added

@@ -27,6 +27,9 @@ pub enum Msg {
     /// An audio file for the Audio Player tab was decoded and checked:
     /// `None` if opening it was stopped.
     AudioLoaded(PathBuf, Result<Option<Arc<audio::Listened>>, String>),
+    /// A zip file for the Audio Player tab was unpacked: `None` if opening it
+    /// was stopped.
+    PlaylistOpened(PathBuf, Result<Option<crate::playlist::Playlist>, String>),
     /// How far into the audio file playback is.
     AudioPosition(Duration),
     /// Playing an audio file ended: true if it reached the end.
@@ -426,6 +429,12 @@ impl Quarters {
 pub fn load_audio(rep: Reporter, control: Arc<Control>, path: PathBuf) {
     let result = audio::listen(&path, || control.is_stopped()).map(|a| a.map(Arc::new)).map_err(err);
     rep.send(Msg::AudioLoaded(path, result));
+}
+
+/// Unpacks a zip file of audio to play as a playlist. Escape stops it.
+pub fn open_playlist(rep: Reporter, control: Arc<Control>, path: PathBuf) {
+    let result = crate::playlist::open(&path, || control.is_stopped()).map_err(err);
+    rep.send(Msg::PlaylistOpened(path, result));
 }
 
 /// Plays an audio file from `start`, reporting the position as it goes.

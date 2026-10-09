@@ -23,6 +23,8 @@ The program file is called `speechout`.
   is said using [Whisper](https://github.com/openai/whisper), an AI model that
   runs on your computer, so the audio never leaves it. It can also label who
   is speaking (Speaker 1, Speaker 2 and so on), again on your computer.
+- **Plays a zip file of WAV and MP3 files as a playlist**, one track after
+  another. A `listing.txt` file in the zip sets the order.
 - **Says where a photo was taken**, if you turn this on and the photo has GPS
   information. The place name is looked up with OpenStreetMap.
 - **Applies wordlists** that fix pronunciation (for example "Leicester" →
@@ -58,14 +60,38 @@ automatically.
 | Control | What it does |
 | --- | --- |
 | Current file | Shows the audio file you chose. |
-| Choose an audio file… | Opens a WAV or MP3 file. The app says how long it is and whether it sounds like speech, music or silence. A long file takes a moment to open; Escape or Stop cancels it. |
+| Choose an audio file… | Opens a WAV or MP3 file, or a zip file of them to play as a playlist. The app says how long it is and whether it sounds like speech, music or silence. A long file takes a moment to open; Escape or Stop cancels it. |
+| Track | Only for a playlist. Chooses which track to play. |
 | Waveform | A picture of the sound, with the part already played highlighted. Screen readers read its length and what it sounds like. |
 | Play / Pause / Stop | Controls playback. Play carries on from where you paused or moved to. |
 | Back 10 seconds / Forward 10 seconds | Moves through the file, and says the new position. |
+| Previous track / Next track | Only for a playlist. Moves to the track before or after, and plays it if the track you were on was playing. |
 | Label who is speaking | Whether the transcript says who is speaking. Choose to have the app work out how many people there are, or choose the number yourself, which is more accurate. |
 | Transcribe the speech | Writes down what is said. This happens by itself when a file sounds like speech; press this to try a file that didn't, or to transcribe again with a different model. While transcribing, it becomes **Stop transcribing**. |
 | Transcript text | The words, in paragraphs, which start after a long pause or, when speakers are labelled, when someone else speaks. You can review it with a screen reader. |
 | Copy the transcript to the clipboard / Save the transcript as a text file… | Takes the transcript elsewhere. |
+
+A zip file of WAV and MP3 files plays as a playlist: when one track ends, the
+next one opens and plays. Each track is transcribed when it opens, as a single
+file would be. The app only offers to download the models for transcribing
+when the first track opens; if you say no, later tracks aren't transcribed
+until you press **Transcribe the speech**.
+
+To choose the order, put a text file called `listing.txt` in the zip, with
+the name of one audio file on each line:
+
+```
+introduction.mp3
+chapter 1.mp3
+chapter 2.mp3
+```
+
+A name can include the folder the file is in inside the zip, such as
+`part 2/chapter 3.mp3`. Capitals don't matter, and blank lines are skipped.
+The app tells you if a line doesn't name a WAV or MP3 file in the zip. Files
+that `listing.txt` leaves out play after the listed ones. Without a
+`listing.txt`, the files play in order of name, with numbers counted properly,
+so "track 2" comes before "track 10".
 
 To decide whether a file is speech, the app looks at each second of sound.
 Speech rises and falls with each syllable and has short gaps between words,
@@ -347,6 +373,7 @@ src/app.rs            The window, tabs and keyboard handling
 src/worker.rs         Background jobs (speaking, saving, loading)
 src/speech/           System and cloud voices
 src/audio.rs          Decoding, playback, WAV and MP3 export, and the speech check
+src/playlist.rs       Zip files of audio played as playlists
 src/document.rs       PDF, TXT, DOCX, ODT, CSV, ODS, PPTX and PPT text extraction
 src/vision.rs         Photo descriptions, GPS and place names
 src/transcribe.rs     Speech recognition with Whisper, and downloading its models

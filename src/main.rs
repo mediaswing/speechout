@@ -10,6 +10,7 @@ mod i18n;
 mod logging;
 mod paths;
 mod platform;
+mod playlist;
 mod secrets;
 mod settings;
 mod speakers;
