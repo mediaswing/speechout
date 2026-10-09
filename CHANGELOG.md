@@ -18,6 +18,18 @@ the app.
   order of name. Choose a track from the new "Track" list, or move between
   them with the "Previous track" and "Next track" buttons.
 
+### Fixed
+
+- A damaged PowerPoint 97–2003 (PPT) file could make the app use up all the
+  computer's memory and close. Now the app says the presentation has more text
+  than it can read.
+- A damaged file that made the app fail while opening or playing it could
+  leave the app waiting for ever, so no other file could be opened until it
+  was restarted. Now the app says the file may be damaged.
+- If the debug log folder is one that other people on the computer can write
+  to, the app no longer follows a link left there in place of the log, which
+  could have overwritten another file.
+
 ## [2.1.0] - 2026-10-08
 
 ### Added

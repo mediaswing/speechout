@@ -15,6 +15,10 @@ const MAX_XML_BYTES: u64 = 100 * 1024 * 1024;
 /// identical cells and rows with a repeat count rather than writing them out,
 /// so a small file could otherwise ask for billions of cells.
 const MAX_ODS_CELLS: usize = 2_000_000;
+/// Limit on the text read from a PPT file. Its slides can refer to the same
+/// drawing or text over and over, so a small file could otherwise expand to
+/// more text than fits in memory.
+const MAX_PPT_TEXT_BYTES: usize = 100 * 1024 * 1024;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum FileKind {
@@ -915,15 +919,17 @@ fn read_ppt(path: &Path) -> anyhow::Result<String> {
     file.open_stream("PowerPoint Document")
         .context("this PPT file has no slides. It may be from PowerPoint 95 or earlier, which can't be read.")?
         .read_to_end(&mut stream)?;
-    Ok(speak_slides(ppt_stream_to_text(&stream)))
+    Ok(speak_slides(ppt_stream_to_text(&stream, MAX_PPT_TEXT_BYTES)?))
 }
 
 /// Reads the text of each slide in a `PowerPoint Document` stream, in the
 /// order they are shown. Text in placeholders, such as titles and bullet
 /// points, is kept in a list for each slide, while text in other shapes is
 /// kept with the slide's drawing, which refers to the placeholder text where
-/// it appears; so each slide's drawing is followed in turn.
-fn ppt_stream_to_text(stream: &[u8]) -> Vec<String> {
+/// it appears; so each slide's drawing is followed in turn. Fails if the
+/// text comes to more than `limit` bytes.
+fn ppt_stream_to_text(stream: &[u8], limit: usize) -> anyhow::Result<Vec<String>> {
+    let mut budget = limit;
     // Where each persistent object starts. Later directories, written by
     // later saves, replace entries in earlier ones.
     let mut persist: HashMap<u32, usize> = HashMap::new();
@@ -982,24 +988,41 @@ fn ppt_stream_to_text(stream: &[u8]) -> Vec<String> {
             let mut used = vec![false; placeholders.len()];
             let mut out = String::new();
             if let Some((_, slide)) = drawing {
-                ppt_collect_text(slide.data, &placeholders, &mut used, &mut out, 0);
+                ppt_collect_text(slide.data, &placeholders, &mut used, &mut out, &mut budget, 0)?;
             }
             // Placeholder text the drawing didn't refer to is read at the end,
             // so nothing is lost if the drawing couldn't be found.
             for (text, _) in placeholders.iter().zip(&used).filter(|(_, used)| !**used) {
-                out.push_str(text);
-                out.push_str("\n\n");
+                push_ppt_text(&mut out, text, &mut budget)?;
             }
-            out
+            Ok(out)
         })
         .collect()
 }
 
+/// Adds a piece of a slide's text to `out`, taking its size off `budget`.
+fn push_ppt_text(out: &mut String, text: &str, budget: &mut usize) -> anyhow::Result<()> {
+    *budget = budget
+        .checked_sub(text.len() + 2)
+        .context("the presentation has more text than can be read (the limit is 100 MB)")?;
+    out.push_str(text);
+    out.push_str("\n\n");
+    Ok(())
+}
+
 /// Appends the text in a slide's records to `out`, in the order the shapes
 /// appear, looking up references to placeholder text in `placeholders`.
-fn ppt_collect_text(data: &[u8], placeholders: &[String], used: &mut [bool], out: &mut String, depth: usize) {
+/// The text's size is taken off `budget`.
+fn ppt_collect_text(
+    data: &[u8],
+    placeholders: &[String],
+    used: &mut [bool],
+    out: &mut String,
+    budget: &mut usize,
+    depth: usize,
+) -> anyhow::Result<()> {
     if depth > ppt::MAX_DEPTH {
-        return;
+        return Ok(());
     }
     for (_, r) in ppt_records(data) {
         match r.kind {
@@ -1008,22 +1031,23 @@ fn ppt_collect_text(data: &[u8], placeholders: &[String], used: &mut [bool], out
                 // number; a box holding only that repeats on every slide.
                 let text = ppt_text(&r);
                 if text.trim() != "*" {
-                    out.push_str(&text);
-                    out.push_str("\n\n");
+                    push_ppt_text(out, &text, budget)?;
                 }
             }
             ppt::OUTLINE_TEXT_REF_ATOM => {
                 let index = r.data.first_chunk::<4>().map_or(usize::MAX, |w| u32::from_le_bytes(*w) as usize);
                 if let Some(text) = placeholders.get(index) {
                     used[index] = true;
-                    out.push_str(text);
-                    out.push_str("\n\n");
+                    push_ppt_text(out, text, budget)?;
                 }
             }
-            _ if r.version == ppt::CONTAINER_VERSION => ppt_collect_text(r.data, placeholders, used, out, depth + 1),
+            _ if r.version == ppt::CONTAINER_VERSION => {
+                ppt_collect_text(r.data, placeholders, used, out, budget, depth + 1)?
+            }
             _ => {}
         }
     }
+    Ok(())
 }
 
 /// Decodes a text atom. Paragraphs end with a carriage return and line
@@ -1435,21 +1459,44 @@ mod tests {
         let directory = ppt_record(0, ppt::PERSIST_DIRECTORY_ATOM, &[(1u32 | 1 << 20).to_le_bytes(), 0u32.to_le_bytes()].concat());
         let stream = [slide, document, directory].concat();
         assert_eq!(
-            tidy(&speak_slides(ppt_stream_to_text(&stream))),
+            tidy(&speak_slides(ppt_stream_to_text(&stream, MAX_PPT_TEXT_BYTES).unwrap())),
             "Slide 1.\n\nTitle\n\nNote box\n\nPoint one\n\nPoint two\n\nSlide 2.\n\nCaf\u{e9}"
         );
     }
 
     #[test]
     fn ppt_survives_truncated_and_deeply_nested_records() {
-        assert!(ppt_stream_to_text(&[0x0F, 0, 0xE8, 0x03, 0xFF, 0xFF, 0xFF, 0x7F, 1]).is_empty());
+        assert!(ppt_stream_to_text(&[0x0F, 0, 0xE8, 0x03, 0xFF, 0xFF, 0xFF, 0x7F, 1], 100).unwrap().is_empty());
         let mut nested = ppt_record(0, ppt::TEXT_BYTES_ATOM, b"deep");
         for _ in 0..1000 {
             nested = ppt_record(0xF, 0xF003, &nested);
         }
         let mut out = String::new();
-        ppt_collect_text(&nested, &[], &mut [], &mut out, 0);
+        ppt_collect_text(&nested, &[], &mut [], &mut out, &mut 100, 0).unwrap();
         assert!(out.is_empty());
+    }
+
+    #[test]
+    fn ppt_text_used_over_and_over_has_a_limit() {
+        // Every slide shows the same drawing, and the drawing refers to the
+        // same placeholder text many times.
+        let refs: Vec<u8> = (0..100).flat_map(|_| ppt_record(0, ppt::OUTLINE_TEXT_REF_ATOM, &[0; 4])).collect();
+        let drawing = [ppt_record(0, ppt::TEXT_BYTES_ATOM, &[b'a'; 1000]), refs].concat();
+        let slide = ppt_record(0xF, ppt::SLIDE, &drawing);
+        let mut list = Vec::new();
+        for _ in 0..100 {
+            list.extend(ppt_record(0, ppt::SLIDE_PERSIST_ATOM, &1u32.to_le_bytes()));
+            list.extend(ppt_record(0, ppt::TEXT_HEADER_ATOM, &[0; 4]));
+            list.extend(ppt_record(0, ppt::TEXT_BYTES_ATOM, &[b'b'; 1000]));
+        }
+        let document = ppt_record(0xF, ppt::DOCUMENT, &ppt_record(0xF, ppt::SLIDE_LIST_WITH_TEXT, &list));
+        let directory = ppt_record(0, ppt::PERSIST_DIRECTORY_ATOM, &[(1u32 | 1 << 20).to_le_bytes(), 0u32.to_le_bytes()].concat());
+        let stream = [slide, document, directory].concat();
+        // About 10 MB of text from about 120 KB of file.
+        let error = ppt_stream_to_text(&stream, 1024 * 1024).unwrap_err();
+        assert!(error.to_string().contains("more text than can be read"), "{error}");
+        let slides = ppt_stream_to_text(&stream, 20 * 1024 * 1024).unwrap();
+        assert_eq!(slides.len(), 100);
     }
 
     #[test]

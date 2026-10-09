@@ -75,11 +75,15 @@ pub fn set_directory(dir: &Path) -> std::io::Result<PathBuf> {
     if guard.as_ref().is_some_and(|open| same_file(&open.path, &path)) {
         return Ok(path);
     }
-    if path.exists() {
-        let _ = std::fs::rename(&path, dir.join(PREVIOUS_LOG_FILE));
+    // Checked without following links, so a link left in the folder is moved
+    // aside like a log would be.
+    if std::fs::symlink_metadata(&path).is_ok() && std::fs::rename(&path, dir.join(PREVIOUS_LOG_FILE)).is_err() {
+        let _ = std::fs::remove_file(&path);
     }
+    // Only ever a new file: if something has appeared in its place since, a
+    // link to another file perhaps, opening fails rather than overwriting it.
     let mut options = OpenOptions::new();
-    options.create(true).write(true).truncate(true);
+    options.create_new(true).write(true);
     #[cfg(unix)]
     {
         use std::os::unix::fs::OpenOptionsExt;
@@ -94,5 +98,31 @@ fn same_file(a: &Path, b: &Path) -> bool {
     match (a.canonicalize(), b.canonicalize()) {
         (Ok(a), Ok(b)) => a == b,
         _ => a == b,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[cfg(unix)]
+    #[test]
+    fn a_link_in_place_of_the_log_is_not_followed() {
+        let dir = tempfile::tempdir().unwrap();
+        let other = dir.path().join("someone-elses-file.txt");
+        std::fs::write(&other, "keep me").unwrap();
+        std::os::unix::fs::symlink(&other, dir.path().join(LOG_FILE)).unwrap();
+        // A link to a file that doesn't exist yet, which opening would create.
+        let logs = dir.path().join("logs");
+        std::fs::create_dir(&logs).unwrap();
+        std::os::unix::fs::symlink(dir.path().join("created.txt"), logs.join(LOG_FILE)).unwrap();
+
+        for folder in [dir.path(), &logs] {
+            let path = set_directory(folder).unwrap();
+            assert!(!std::fs::symlink_metadata(&path).unwrap().file_type().is_symlink());
+            assert!(std::fs::symlink_metadata(folder.join(PREVIOUS_LOG_FILE)).unwrap().file_type().is_symlink());
+        }
+        assert_eq!(std::fs::read_to_string(&other).unwrap(), "keep me");
+        assert!(!dir.path().join("created.txt").exists());
     }
 }

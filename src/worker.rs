@@ -76,6 +76,21 @@ impl Reporter {
     }
 }
 
+/// Runs `work`, which reads a file the user chose, turning a crash in it into
+/// an error. Otherwise a damaged file that crashed a reader would leave the
+/// window waiting for an answer that never comes.
+fn contain<T>(work: impl FnOnce() -> anyhow::Result<T>) -> anyhow::Result<T> {
+    std::panic::catch_unwind(std::panic::AssertUnwindSafe(work)).unwrap_or_else(|payload| {
+        let detail = payload
+            .downcast_ref::<&str>()
+            .map(|s| s.to_string())
+            .or_else(|| payload.downcast_ref::<String>().cloned())
+            .unwrap_or_default();
+        log::error!("a background job crashed: {detail}");
+        Err(anyhow::anyhow!("the file could not be read. It may be damaged."))
+    })
+}
+
 /// The user sees the friendly top-level message; the technical cause chain
 /// goes to the debug log.
 fn err(e: anyhow::Error) -> String {
@@ -211,10 +226,10 @@ pub fn check_for_update(rep: Reporter, requested: bool) {
 
 pub fn load_file(rep: Reporter, path: PathBuf, model: String, resolve_location: bool) {
     use crate::document::FileKind;
-    let result = match FileKind::from_path(&path) {
+    let result = contain(|| match FileKind::from_path(&path) {
         Some(FileKind::Image) => crate::vision::describe(&path, &model, resolve_location),
         _ => crate::document::extract_text(&path),
-    };
+    });
     rep.send(Msg::Loaded(path, result.map_err(err)));
 }
 
@@ -427,13 +442,13 @@ impl Quarters {
 /// Decodes an audio file for the Audio Player tab and checks whether it
 /// sounds like speech. Escape stops it.
 pub fn load_audio(rep: Reporter, control: Arc<Control>, path: PathBuf) {
-    let result = audio::listen(&path, || control.is_stopped()).map(|a| a.map(Arc::new)).map_err(err);
+    let result = contain(|| audio::listen(&path, || control.is_stopped())).map(|a| a.map(Arc::new)).map_err(err);
     rep.send(Msg::AudioLoaded(path, result));
 }
 
 /// Unpacks a zip file of audio to play as a playlist. Escape stops it.
 pub fn open_playlist(rep: Reporter, control: Arc<Control>, path: PathBuf) {
-    let result = crate::playlist::open(&path, || control.is_stopped()).map_err(err);
+    let result = contain(|| crate::playlist::open(&path, || control.is_stopped())).map_err(err);
     rep.send(Msg::PlaylistOpened(path, result));
 }
 
@@ -441,7 +456,7 @@ pub fn open_playlist(rep: Reporter, control: Arc<Control>, path: PathBuf) {
 /// The control pauses, moves and stops it.
 pub fn play_audio(rep: Reporter, control: Arc<Control>, path: PathBuf, start: Duration) {
     use anyhow::Context;
-    let result = (|| {
+    let result = contain(|| {
         let playback = Playback::open()?;
         let file = std::fs::File::open(&path).with_context(|| format!("could not open {}", path.display()))?;
         let decoder = rodio::Decoder::try_from(file).context("the audio could not be decoded")?;
@@ -488,7 +503,7 @@ pub fn play_audio(rep: Reporter, control: Arc<Control>, path: PathBuf, start: Du
             }
             std::thread::sleep(Duration::from_millis(100));
         }
-    })();
+    });
     rep.send(Msg::AudioEnded(result.map_err(err)));
 }
 
@@ -531,7 +546,7 @@ pub fn transcribe(
     audio: Arc<audio::Listened>,
     labels: SpeakerLabels,
 ) {
-    let result = (|| {
+    let result = contain(|| {
         let labelling = !matches!(labels, SpeakerLabels::Off);
         let share = if labelling { WORDS_SHARE } else { 1.0 };
         let mut quarters = Quarters::new(&rep, "transcript.progress");
@@ -564,7 +579,7 @@ pub fn transcribe(
         let Some(turns) = turns else { return Ok(None) };
         let (text, speakers) = crate::speakers::label(&pieces, &turns);
         Ok(Some(Transcript { text, words, speakers: Some(speakers) }))
-    })();
+    });
     rep.send(Msg::Transcribed(path, result.map_err(err)));
 }
 
@@ -657,6 +672,13 @@ mod tests {
             retry_message(Provider::Deepgram, Kind::Unreachable, Duration::from_millis(300)),
             "Could not reach Deepgram. Trying again in 1 second. Press Escape to stop."
         );
+    }
+
+    #[test]
+    fn a_crash_becomes_an_error() {
+        let result: anyhow::Result<()> = contain(|| panic!("bad file"));
+        assert_eq!(err(result.unwrap_err()), "The file could not be read. It may be damaged.");
+        assert_eq!(contain(|| Ok(5)).unwrap(), 5);
     }
 
     #[test]
