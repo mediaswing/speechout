@@ -1,6 +1,6 @@
 [package]
 name = "speechout"
-version = "2.2.0"
+version = "2.3.0"
 edition = "2024"
 description = "Speech Output Engine: an accessible text-to-speech reader for documents and images"
 license = "GPL-3.0-or-later"

@@ -10,6 +10,8 @@ the app.
 
 ## [Unreleased]
 
+## [2.3.0] - 2026-10-09
+
 ### Added
 
 - Keyboard shortcuts can now be changed or turned off, one at a time or all
