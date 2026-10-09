@@ -1639,8 +1639,12 @@ impl SpeechApp {
         };
         let can_stop = self.can_stop();
         let ready = |a: Action| !matches!(a, Action::Stop | Action::StopSecond) || can_stop;
-        let commands = self.keymap.take(&mut raw_input.events, cx, ready);
-        self.pending.extend(commands);
+        for command in self.keymap.take(&mut raw_input.events, cx, ready) {
+            match command {
+                Command::CloseList => egui::Popup::close_all(ctx),
+                _ => self.pending.push(command),
+            }
+        }
     }
 
     fn run_shortcuts(&mut self) {
@@ -1652,6 +1656,8 @@ impl SpeechApp {
                     }
                 }
                 Command::Run(action) => self.run_action(action),
+                // Handled in `take_shortcuts`.
+                Command::CloseList => {}
             }
         }
     }
@@ -2035,8 +2041,10 @@ impl SpeechApp {
         if full_button(ui, &self.keyed("shortcuts.show", Action::Help), true).clicked() {
             self.show_shortcuts();
         }
-        if full_button(ui, &t("shortcuts.reset"), !self.settings.shortcuts.is_empty()).clicked() {
+        let changed = !self.settings.shortcuts.is_empty() || !self.settings.shortcuts_enabled;
+        if full_button(ui, &t("shortcuts.reset"), changed).clicked() {
             self.settings.shortcuts.clear();
+            self.settings.shortcuts_enabled = true;
             self.set_shortcuts();
             self.announce(t("shortcuts.reset_done"));
         }
@@ -2766,6 +2774,34 @@ mod tests {
         assert_ne!(focused(&ctx), Some(box_id), "Tab moves on instead of typing a tab");
         assert!(focused(&ctx).is_some());
         assert_eq!(text, "Hello");
+    }
+
+    #[test]
+    fn escape_closes_a_list_and_keeps_focus() {
+        let ctx = egui::Context::default();
+        let keymap = Keymap::new(true, &BTreeMap::new(), Platform::Windows);
+        let options: Vec<String> = ["One", "Two"].map(String::from).to_vec();
+        let mut selected = 0;
+        let mut ui_fn = |ui: &mut Ui| {
+            dropdown(ui, "test", "Number", &options, &mut selected, true);
+        };
+        frame(&ctx, vec![], &mut ui_fn);
+        tab(&ctx, &mut ui_fn);
+        let combo = focused(&ctx).expect("the dropdown has focus");
+        frame(&ctx, vec![press(Key::ArrowDown, Modifiers::ALT)], &mut ui_fn);
+        frame(&ctx, vec![], &mut ui_fn);
+        assert!(egui::Popup::is_any_open(&ctx));
+
+        // As `take_shortcuts` does, with something running so Escape could
+        // also stop: closing the list comes first.
+        let cx = KeyContext { popup_open: egui::Popup::is_any_open(&ctx), tab_count: 4, ..KeyContext::default() };
+        let mut events = vec![press(Key::Escape, Modifiers::NONE)];
+        assert_eq!(keymap.take(&mut events, cx, |_| true), vec![Command::CloseList]);
+        egui::Popup::close_all(&ctx);
+        frame(&ctx, events, &mut ui_fn);
+        frame(&ctx, vec![], &mut ui_fn);
+        assert!(!egui::Popup::is_any_open(&ctx), "the list is closed");
+        assert_eq!(focused(&ctx), Some(combo), "focus stays on the dropdown");
     }
 
     #[test]

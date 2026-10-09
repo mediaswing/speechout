@@ -34,8 +34,9 @@ the app.
 - Shortcuts no longer go off when extra keys are held. Typing a character
   with AltGr, such as ś (AltGr+S) or ó (AltGr+O) on a Polish keyboard, could
   open the Save or Open dialog, and AltGr with a number could switch tabs.
-- Pressing Escape when nothing was running took focus away from the control,
-  so screen readers lost their place. Now focus stays where it was.
+- Pressing Escape when nothing was running, or to close a list, took focus
+  away from the control, so screen readers lost their place. Now focus stays
+  where it was.
 - On a Mac, text between double square brackets, such as `[[volm 0]]`, was
   taken by the system voice as a command, so a document could silence the
   voice, add long pauses or change how it spoke. Now it is read as ordinary

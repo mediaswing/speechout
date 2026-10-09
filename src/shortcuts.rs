@@ -389,6 +389,8 @@ pub enum Command {
     Run(Action),
     /// Go to the tab with this index, counting from 0.
     Tab(usize),
+    /// Close the open dropdown list, keeping focus on its dropdown.
+    CloseList,
 }
 
 /// What the window looks like when a key is pressed.
@@ -513,9 +515,10 @@ impl Keymap {
     ///
     /// Also, while a tab has focus, the Left and Right arrows, Home and End
     /// move between tabs, as in the ARIA tabs pattern. Escape on its own is
-    /// removed when no list is open, because otherwise it would take keyboard
-    /// focus away from the control, leaving screen reader users nowhere.
-    /// Typed text is never touched.
+    /// always taken: egui would otherwise take keyboard focus away from the
+    /// control, leaving screen reader users nowhere. While a list is open it
+    /// becomes `CloseList`, so the app closes the list instead. Typed text is
+    /// never touched.
     pub fn take(&self, events: &mut Vec<Event>, cx: KeyContext, ready: impl Fn(Action) -> bool) -> Vec<Command> {
         let mut commands = Vec::new();
         events.retain(|event| {
@@ -525,7 +528,13 @@ impl Keymap {
                     commands.push(command);
                     false
                 }
-                None => !(*key == Key::Escape && modifiers.is_none() && !cx.popup_open),
+                None if *key == Key::Escape && modifiers.is_none() => {
+                    if cx.popup_open {
+                        commands.push(Command::CloseList);
+                    }
+                    false
+                }
+                None => true,
             }
         });
         commands
@@ -775,11 +784,12 @@ mod tests {
         assert!(map.take(&mut events, cx(), |a| a != Action::Stop).is_empty());
         assert!(events.is_empty());
 
-        // A list is open: Escape is left for the list to close.
+        // A list is open: Escape closes it, rather than stopping, and is
+        // taken too, so closing the list doesn't drop focus either.
         let open = KeyContext { popup_open: true, ..cx() };
         let mut events = vec![press(Key::Escape, Modifiers::NONE)];
-        assert!(map.take(&mut events, open, |_| true).is_empty());
-        assert_eq!(events.len(), 1);
+        assert_eq!(map.take(&mut events, open, |_| true), vec![Command::CloseList]);
+        assert!(events.is_empty());
     }
 
     #[test]

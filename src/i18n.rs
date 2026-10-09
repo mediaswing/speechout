@@ -607,6 +607,10 @@ fn render(
     args: &[(&str, &dyn Display)],
 ) -> String {
     let text = template(active, key);
+    // Most text names no key, so skip looking for hints.
+    if !text.contains("_hint}") {
+        return fill(text, args);
+    }
     let names = placeholders(text);
     let sentences: Vec<(&str, String)> = hints
         .iter()
