@@ -46,7 +46,7 @@ const ENGLISH: &[(&str, &str)] = &[
     ("tab.player", "Audio Player"),
     ("tab.chosen", "{tab} tab."),
     // Start-up
-    ("status.ready", "Ready. Press {key_name}+O to choose a file."),
+    ("status.ready", "Ready.{open_hint}{help_hint}"),
     ("status.log_off", "Debug logging is off because the log folder could not be opened: {error}."),
     // F7
     ("progress.paused", "Paused at {percent} percent."),
@@ -86,7 +86,7 @@ const ENGLISH: &[(&str, &str)] = &[
     ("file.looking_for_model", "Looking for the local AI model to describe {name}."),
     ("file.describing", "Describing {name}. This can take a minute."),
     ("file.opening", "Opening {name}."),
-    ("file.loaded", "Loaded {name}, {count} words. Press F5 to read it aloud or {key_name}+S to save it as audio."),
+    ("file.loaded", "Loaded {name}, {count} words.{read_hint}{save_hint}"),
     ("file.load_failed", "Could not load {name}. {error}"),
     ("file.fallback_name", "the file"),
     // Ollama and AI models
@@ -104,10 +104,10 @@ const ENGLISH: &[(&str, &str)] = &[
     (
         "model.download_question",
         "Ollama does not have an AI model that can describe photos yet.\n\nDownload {model} now? It is {size} and can \
-         take a while. It is stored by Ollama on this computer. You can press Escape to stop.",
+         take a while. It is stored by Ollama on this computer.{stop_hint}",
     ),
     ("model.not_downloaded", "No model was downloaded. You can download one later on the Settings tab."),
-    ("model.downloading", "Downloading {model}, {size}. You will hear the progress. Press Escape to stop."),
+    ("model.downloading", "Downloading {model}, {size}. You will hear the progress.{stop_hint}"),
     ("model.download_progress", "Downloading the AI model, {percent}% done."),
     ("ollama.running", "Ollama is running. Looking for a model to describe the photo."),
     ("ollama.setup_failed", "Could not set up Ollama. {error}"),
@@ -147,16 +147,16 @@ const ENGLISH: &[(&str, &str)] = &[
     ("update.open_failed", "{error}. The download page is {url}"),
     ("update.later", "Version {version} is available. You can download it later from the Settings tab."),
     // Reading aloud and saving
-    ("read.nothing", "There is nothing to read yet. Press {key_name}+O to choose a file."),
+    ("read.nothing", "There is nothing to read yet.{open_hint}"),
     ("read.nothing_pasted", "There is nothing to read yet. Type or paste text into the box."),
-    ("read.started", "Reading aloud. Press F6 to pause or Escape to stop."),
+    ("read.started", "Reading aloud.{pause_hint}{stop_hint}"),
     ("read.stopped", "Stopped reading."),
     ("read.finished", "Finished reading."),
-    ("read.paused", "Paused. Press F6 to resume."),
+    ("read.paused", "Paused.{resume_hint}"),
     ("read.resumed", "Resumed."),
     (
         "read.audio_playing",
-        "The audio file on the Audio Player tab is playing or paused. Stop it first, or press Escape.",
+        "The audio file on the Audio Player tab is playing or paused. Stop it first.{stop_hint}",
     ),
     ("read.stopping", "Stopping."),
     ("preview.stopped", "Stopped the preview."),
@@ -170,16 +170,15 @@ const ENGLISH: &[(&str, &str)] = &[
     ("usage.up_to.other", "Up to {count} characters will be sent to {service}."),
     ("save.dialog_title", "Save spoken text as audio"),
     ("save.default_name", "speech"),
-    ("save.preparing", "Preparing {name}."),
-    ("save.cancel_hint", "Press Escape to cancel."),
-    ("save.progress", "Preparing audio, {percent}% done."),
+    ("save.preparing", "Preparing {name}.{usage}{cancel_hint}"),
+        ("save.progress", "Preparing audio, {percent}% done."),
     ("save.cancelled", "Cancelled saving audio."),
     ("save.saved", "Saved the audio as {name}."),
     ("retry.rate_limited", "{service} is limiting how fast requests can be made."),
     ("retry.busy", "{service} is busy."),
     ("retry.unreachable", "Could not reach {service}."),
-    ("retry.wait.one", "Trying again in 1 second. Press Escape to stop."),
-    ("retry.wait.other", "Trying again in {count} seconds. Press Escape to stop."),
+    ("retry.wait.one", "Trying again in 1 second.{stop_hint}"),
+    ("retry.wait.other", "Trying again in {count} seconds.{stop_hint}"),
     // Speech services, voices and formats
     ("service.system", "System voices (built in)"),
     ("service.openai", "OpenAI text to speech"),
@@ -195,12 +194,12 @@ const ENGLISH: &[(&str, &str)] = &[
     ("general.current_file", "Current file"),
     ("general.loading", "Loading…"),
     ("general.no_file", "No file chosen"),
-    ("general.choose_file", "Choose a file… ({key}+O)"),
+    ("general.choose_file", "Choose a file…{shortcut}"),
     ("general.source", "Text to read"),
     ("general.source_file", "Choose File"),
     ("general.source_paste", "Paste Text"),
-    ("general.source_chosen_file", "Choose File. Press {key_name}+O to choose a file."),
-    ("general.source_chosen_paste", "Paste Text. Type or paste text into the box, then press F5 to read it aloud."),
+    ("general.source_chosen_file", "Choose File.{open_hint}"),
+    ("general.source_chosen_paste", "Paste Text. Type or paste text into the box.{read_hint}"),
     ("general.pasted", "Text"),
     ("general.pasted_full", "The text box is full. It holds up to {count} characters."),
     ("general.service", "Speech service"),
@@ -212,16 +211,16 @@ const ENGLISH: &[(&str, &str)] = &[
     ("general.retry_voices", "Try loading voices again"),
     ("general.speed", "Speaking speed"),
     ("general.preview", "Preview voice"),
-    ("general.read_aloud", "Read aloud (F5)"),
-    ("general.pause", "Pause (F6)"),
-    ("general.resume", "Resume (F6)"),
-    ("general.stop", "Stop (Esc)"),
-    ("general.cancel_saving", "Cancel saving (Esc)"),
-    ("general.stop_downloading", "Stop downloading (Esc)"),
-    ("general.stop_translating", "Stop translating (Esc)"),
-    ("general.stop_transcribing", "Stop transcribing (Esc)"),
+    ("general.read_aloud", "Read aloud{shortcut}"),
+    ("general.pause", "Pause{shortcut}"),
+    ("general.resume", "Resume{shortcut}"),
+    ("general.stop", "Stop{shortcut}"),
+    ("general.cancel_saving", "Cancel saving{shortcut}"),
+    ("general.stop_downloading", "Stop downloading{shortcut}"),
+    ("general.stop_translating", "Stop translating{shortcut}"),
+    ("general.stop_transcribing", "Stop transcribing{shortcut}"),
     ("general.format", "Audio file format"),
-    ("general.save", "Save spoken text as audio… ({key}+S)"),
+    ("general.save", "Save spoken text as audio…{shortcut}"),
     ("general.copy", "Copy text to the clipboard"),
     // Settings tab
     ("settings.heading", "Settings"),
@@ -253,6 +252,52 @@ const ENGLISH: &[(&str, &str)] = &[
     ("settings.updates_on", "Check for updates when the app starts"),
     ("settings.updates_off", "Do not check for updates automatically"),
     ("settings.check_now", "Check for updates now"),
+    // Keyboard shortcuts
+    ("shortcuts.heading", "Keyboard shortcuts"),
+    ("shortcuts.use", "Keyboard shortcuts"),
+    ("shortcuts.use_on", "Use the keyboard shortcuts below"),
+    ("shortcuts.use_off", "Turn off all keyboard shortcuts"),
+    ("shortcuts.turned_on", "Keyboard shortcuts are on."),
+    ("shortcuts.turned_off", "Keyboard shortcuts are off. Every command still has a button."),
+    ("shortcuts.none", "Off"),
+    ("shortcuts.note", "Shortcuts already used for something else are not listed. Turn that one off to free it."),
+    ("shortcuts.show", "Show the keyboard shortcuts{shortcut}"),
+    ("shortcuts.reset", "Reset the keyboard shortcuts"),
+    ("shortcuts.reset_done", "The keyboard shortcuts are back to how they started."),
+    ("shortcuts.dialog_title", "Keyboard shortcuts"),
+    ("shortcuts.dialog_off", "Keyboard shortcuts are turned off."),
+    (
+        "shortcuts.dialog_always",
+        "These keys always work:\nTab and Shift+Tab move between controls.\nSpace or Enter presses a button or opens a \
+         list.\nUp and Down arrows change the choice in a list, and {alt}+Down opens it.\nLeft and Right arrows move \
+         between tabs when a tab has focus.\nEscape closes an open list.",
+    ),
+    ("shortcuts.dialog_change", "You can change or turn off the shortcuts on the Settings tab."),
+    ("shortcut.open", "Choose a file"),
+    ("shortcut.save", "Save as audio, or save the transcript"),
+    ("shortcut.go_to_tab", "Go to a tab by its number"),
+    ("shortcut.next_tab", "Next tab"),
+    ("shortcut.previous_tab", "Previous tab"),
+    ("shortcut.read", "Read aloud, or play the audio file"),
+    ("shortcut.read_second", "Read aloud, or play: second shortcut"),
+    ("shortcut.pause", "Pause or resume"),
+    ("shortcut.stop", "Stop"),
+    ("shortcut.stop_second", "Stop: second shortcut"),
+    ("shortcut.progress", "Hear the progress, or the time in the audio file"),
+    ("shortcut.help", "List the keyboard shortcuts"),
+    // Sentences that name a shortcut key, put into other messages.
+    ("hint.open", "Press {key} to choose a file."),
+    ("hint.open_here", "Press {key} on this tab."),
+    ("hint.read", "Press {key} to read it aloud."),
+    ("hint.play", "Press {key} to play it."),
+    ("hint.save", "Press {key} to save it as audio."),
+    ("hint.save_transcript", "Press {key} to save it."),
+    ("hint.pause", "Press {key} to pause."),
+    ("hint.resume", "Press {key} to resume."),
+    ("hint.time", "Press {key} to hear the time."),
+    ("hint.stop", "Press {key} to stop."),
+    ("hint.cancel", "Press {key} to cancel."),
+    ("hint.help", "Press {key} to list the keyboard shortcuts."),
     ("settings.log_folder", "Debug log folder"),
     ("settings.choose_log", "Choose the debug log folder…"),
     ("settings.log_dialog", "Choose where to save debug logs"),
@@ -277,10 +322,10 @@ const ENGLISH: &[(&str, &str)] = &[
     ("keys.removed", "Removed all saved API keys."),
     // Audio Player tab
     ("player.heading", "Play an audio file and transcribe speech"),
-    ("player.choose", "Choose an audio file… ({key}+O)"),
+    ("player.choose", "Choose an audio file…{shortcut}"),
     ("player.dialog_title", "Choose an audio file"),
     ("player.filter", "Audio files and playlists (WAV, MP3 and zip)"),
-    ("player.opening", "Opening {name} and listening for speech. Press Escape to stop."),
+    ("player.opening", "Opening {name} and listening for speech.{stop_hint}"),
     ("player.open_stopped", "Stopped opening {name}."),
     ("player.wait_transcribing", "Wait for transcribing to finish, or stop it, before choosing another audio file."),
     ("player.loaded", "Opened {name}, {length} long."),
@@ -289,7 +334,7 @@ const ENGLISH: &[(&str, &str)] = &[
     (
         "player.not_speech",
         "It sounds mostly like music or other sounds rather than speech, so it was not transcribed. Press \
-         \"{button}\" to try anyway. Press F5 to play it.",
+         \"{button}\" to try anyway.{play_hint}",
     ),
     ("player.silent", "It seems to be silent."),
     ("player.summary", "Length: {length}. Sounds like: {sound}."),
@@ -297,20 +342,20 @@ const ENGLISH: &[(&str, &str)] = &[
     ("player.kind_other", "music or other sounds"),
     ("player.kind_silent", "silence"),
     ("player.waveform", "Waveform. {summary}"),
-    ("player.play", "Play (F5)"),
+    ("player.play", "Play{shortcut}"),
     ("player.back", "Back 10 seconds"),
     ("player.forward", "Forward 10 seconds"),
     ("player.transcribe", "Transcribe the speech"),
-    ("player.nothing", "Choose an audio file first. Press {key_name}+O on this tab."),
+    ("player.nothing", "Choose an audio file first.{open_here_hint}"),
     ("player.reading_aloud", "Something is being read aloud. Stop it before playing the audio file."),
-    ("player.playing", "Playing. Press F6 to pause, F7 to hear the time, or Escape to stop."),
-    ("player.paused", "Paused at {position}. Press F6 to resume."),
+    ("player.playing", "Playing.{pause_hint}{time_hint}{stop_hint}"),
+    ("player.paused", "Paused at {position}.{resume_hint}"),
     ("player.position", "{position} of {length}."),
     ("player.position_paused", "Paused at {position} of {length}."),
     ("player.finished", "Finished playing the audio file."),
     ("player.stopped", "Stopped playing the audio file."),
     ("player.play_failed", "Could not play the audio file. {error}"),
-    ("playlist.unpacking", "Opening the playlist {name}. Press Escape to stop."),
+    ("playlist.unpacking", "Opening the playlist {name}.{stop_hint}"),
     ("playlist.opened", "Opened the playlist {name}, with {count} tracks."),
     ("playlist.opened_one", "Opened the playlist {name}, with 1 track."),
     (
@@ -318,7 +363,7 @@ const ENGLISH: &[(&str, &str)] = &[
         "{count} lines of listing.txt don't name a WAV or MP3 file in the zip, so they were skipped.",
     ),
     ("playlist.missing_one", "1 line of listing.txt doesn't name a WAV or MP3 file in the zip, so it was skipped."),
-    ("playlist.opening", "Opening track {number} of {count}, {name}. Press Escape to stop."),
+    ("playlist.opening", "Opening track {number} of {count}, {name}.{stop_hint}"),
     ("playlist.loaded", "Opened track {number} of {count}, {name}, {length} long."),
     ("playlist.playing", "Playing track {number} of {count}, {name}, {length} long."),
     ("playlist.not_transcribed", "It sounds like speech. Press \"{button}\" to transcribe it."),
@@ -351,12 +396,11 @@ const ENGLISH: &[(&str, &str)] = &[
     ("transcript.no_speech", "No speech was found in {name}."),
     (
         "transcript.done",
-        "Transcribed {name}, {count} words. The transcript is under the Transcribe button. Press {key_name}+S to \
-         save it.",
+        "Transcribed {name}, {count} words. The transcript is under the Transcribe button.{save_transcript_hint}",
     ),
     ("transcript.failed", "Could not transcribe the audio file. {error}"),
     ("transcript.copy", "Copy the transcript to the clipboard"),
-    ("transcript.save", "Save the transcript as a text file… ({key}+S)"),
+    ("transcript.save", "Save the transcript as a text file…{shortcut}"),
     ("transcript.save_title", "Save the transcript"),
     ("transcript.filter", "Text file"),
     ("transcript.default_name", "transcript"),
@@ -367,11 +411,10 @@ const ENGLISH: &[(&str, &str)] = &[
     (
         "whisper.download_question",
         "Transcribing speech needs {model}, an AI model that runs on this computer, so your audio is not sent \
-         anywhere.\n\nDownload it now from Hugging Face? It is {size} and is only downloaded once. You can press \
-         Escape to stop.",
+         anywhere.\n\nDownload it now from Hugging Face? It is {size} and is only downloaded once.{stop_hint}",
     ),
     ("whisper.not_downloaded", "Not transcribed. To download the model later, press \"{button}\"."),
-    ("whisper.downloading", "Downloading {model}, {size}. You will hear the progress. Press Escape to stop."),
+    ("whisper.downloading", "Downloading {model}, {size}. You will hear the progress.{stop_hint}"),
     ("whisper.downloaded", "Downloaded {model}."),
     (
         "whisper.download_stopped",
@@ -391,10 +434,10 @@ const ENGLISH: &[(&str, &str)] = &[
         "speakers.download_question",
         "Labelling who is speaking needs two small AI models that run on this computer, so your audio is not sent \
          anywhere.\n\nDownload them now from Hugging Face and GitHub? Together they are {size} and are only \
-         downloaded once. You can press Escape to stop.",
+         downloaded once.{stop_hint}",
     ),
     ("speakers.not_downloaded", "Transcribing without labelling the speakers."),
-    ("speakers.downloading", "Downloading the speaker models, {size}. You will hear the progress. Press Escape to stop."),
+    ("speakers.downloading", "Downloading the speaker models, {size}. You will hear the progress.{stop_hint}"),
     ("speakers.downloaded", "Downloaded the speaker models."),
     ("speakers.download_stopped", "Stopped downloading the speaker models."),
     ("speakers.download_failed", "Could not download the speaker models. {error}"),
@@ -419,7 +462,7 @@ const ENGLISH: &[(&str, &str)] = &[
         "language.no_model",
         "Translating needs a local AI model in Ollama. Install Ollama and download a model, then try again.",
     ),
-    ("language.translating", "Translating the app into {language} with {model}. This takes a few minutes. Press Escape to stop."),
+    ("language.translating", "Translating the app into {language} with {model}. This takes a few minutes.{stop_hint}"),
     ("language.progress", "Translating the app, {percent}% done."),
     ("language.done", "Translated the app into {language}."),
     (
@@ -515,6 +558,35 @@ pub fn english(key: &str) -> Option<&'static str> {
     english_map().get(key).copied()
 }
 
+/// A sentence telling people which key to press, such as " Press Escape to
+/// stop.", put wherever `{placeholder}` appears in interface text. The
+/// sentence is the text for `text_key` with `{key}` filled in, in the
+/// language in use. It is left out when `key` is `None`, because that
+/// shortcut is turned off.
+#[derive(Clone, Debug)]
+pub struct Hint {
+    pub placeholder: &'static str,
+    pub text_key: &'static str,
+    pub key: Option<String>,
+}
+
+/// The key hints for the shortcuts in use, or `None` for the default
+/// shortcuts. See `set_hints`.
+static HINTS: RwLock<Option<Vec<Hint>>> = RwLock::new(None);
+
+/// Sets the key hints, whenever the keyboard shortcuts change.
+pub fn set_hints(hints: Vec<Hint>) {
+    *HINTS.write().unwrap_or_else(|e| e.into_inner()) = Some(hints);
+}
+
+fn default_hints() -> &'static [Hint] {
+    static DEFAULTS: OnceLock<Vec<Hint>> = OnceLock::new();
+    DEFAULTS.get_or_init(|| {
+        use crate::shortcuts::{Keymap, Platform};
+        Keymap::new(true, &BTreeMap::new(), Platform::CURRENT).hints()
+    })
+}
+
 /// The text for `key` in the language in use.
 pub fn t(key: &str) -> String {
     tf(key, &[])
@@ -524,18 +596,40 @@ pub fn t(key: &str) -> String {
 /// its value from `args`.
 pub fn tf(key: &str, args: &[(&str, &dyn Display)]) -> String {
     let active = ACTIVE.read().unwrap_or_else(|e| e.into_inner());
-    render(active.as_ref(), key, args)
+    let hints = HINTS.read().unwrap_or_else(|e| e.into_inner());
+    render(active.as_ref(), hints.as_deref().unwrap_or_else(|| default_hints()), key, args)
 }
 
-fn render(active: Option<&HashMap<String, String>>, key: &str, args: &[(&str, &dyn Display)]) -> String {
-    let template = match active.and_then(|a| a.get(key)) {
+fn render(
+    active: Option<&HashMap<String, String>>,
+    hints: &[Hint],
+    key: &str,
+    args: &[(&str, &dyn Display)],
+) -> String {
+    let text = template(active, key);
+    let names = placeholders(text);
+    let sentences: Vec<(&str, String)> = hints
+        .iter()
+        .filter(|h| names.contains(h.placeholder))
+        .map(|h| {
+            let sentence = h.key.as_ref().map(|k| format!(" {}", fill(template(active, h.text_key), &[("key", k)])));
+            (h.placeholder, sentence.unwrap_or_default())
+        })
+        .collect();
+    let mut all = args.to_vec();
+    all.extend(sentences.iter().map(|(name, sentence)| (*name, sentence as &dyn Display)));
+    fill(text, &all)
+}
+
+/// The text for `key` before values are filled in.
+fn template<'a>(active: Option<&'a HashMap<String, String>>, key: &'a str) -> &'a str {
+    match active.and_then(|a| a.get(key)) {
         Some(text) => text.as_str(),
         None => english(key).unwrap_or_else(|| {
             log::warn!("no English text for {key}");
             key
         }),
-    };
-    fill(template, args)
+    }
 }
 
 /// Replaces each `{name}` in `template` with its value. Braces that are not a
@@ -819,17 +913,48 @@ mod tests {
         pairs.iter().map(|(k, v)| ((*k).to_owned(), (*v).to_owned())).collect()
     }
 
+    /// Hints naming `read` for reading aloud and `save` for saving.
+    fn hints(read: Option<&str>, save: Option<&str>) -> Vec<Hint> {
+        vec![
+            Hint { placeholder: "read_hint", text_key: "hint.read", key: read.map(str::to_owned) },
+            Hint { placeholder: "save_hint", text_key: "hint.save", key: save.map(str::to_owned) },
+        ]
+    }
+
+    #[test]
+    fn hints_use_the_translation() {
+        let fr = map(&[("file.loaded", "{name} : {count} mots.{read_hint}"), ("hint.read", "Appuyez sur {key}.")]);
+        let name = "notes.pdf";
+        assert_eq!(
+            render(Some(&fr), &hints(Some("F5"), None), "file.loaded", &[("name", &name), ("count", &3)]),
+            "notes.pdf : 3 mots. Appuyez sur F5."
+        );
+    }
+
+    #[test]
+    fn every_hint_placeholder_has_a_sentence() {
+        // Placeholders ending in _hint are filled from the keyboard shortcuts,
+        // so each needs a hint sentence naming {key}.
+        for (key, text) in ENGLISH {
+            for name in placeholders(text).into_iter().filter(|n| n.ends_with("_hint")) {
+                let sentence = english(&format!("hint.{}", name.trim_end_matches("_hint")));
+                assert!(sentence.is_some_and(|s| s.contains("{key}")), "{key} uses {{{name}}} with no hint sentence");
+            }
+        }
+    }
+
     #[test]
     fn keys_are_unique() {
         assert_eq!(english_map().len(), ENGLISH.len(), "a key appears twice in ENGLISH");
     }
 
-    const SOURCES: [&str; 5] = [
+    const SOURCES: [&str; 6] = [
         include_str!("app.rs"),
         include_str!("worker.rs"),
         include_str!("main.rs"),
         include_str!("audio.rs"),
         include_str!("speech/mod.rs"),
+        include_str!("shortcuts.rs"),
     ];
 
     #[test]
@@ -856,10 +981,15 @@ mod tests {
     #[test]
     fn fills_in_values() {
         let name = "notes.pdf";
-        assert_eq!(render(None, "file.opening", &[("name", &name)]), "Opening notes.pdf.");
+        assert_eq!(render(None, &[], "file.opening", &[("name", &name)]), "Opening notes.pdf.");
         assert_eq!(
-            render(None, "file.loaded", &[("name", &name), ("count", &12), ("key_name", &"Control")]),
-            "Loaded notes.pdf, 12 words. Press F5 to read it aloud or Control+S to save it as audio."
+            render(None, &hints(Some("F5"), Some("Control+S")), "file.loaded", &[("name", &name), ("count", &12)]),
+            "Loaded notes.pdf, 12 words. Press F5 to read it aloud. Press Control+S to save it as audio."
+        );
+        // A shortcut that is off leaves its sentence out.
+        assert_eq!(
+            render(None, &hints(None, Some("Control+S")), "file.loaded", &[("name", &name), ("count", &12)]),
+            "Loaded notes.pdf, 12 words. Press Control+S to save it as audio."
         );
         // Unknown names and stray braces are left alone.
         assert_eq!(fill("{a} {b} {", &[("a", &1)]), "1 {b} {");
@@ -869,8 +999,8 @@ mod tests {
     fn uses_the_translation_and_falls_back_to_english() {
         let fr = map(&[("file.opening", "Ouverture de {name}.")]);
         let name = "notes.pdf";
-        assert_eq!(render(Some(&fr), "file.opening", &[("name", &name)]), "Ouverture de notes.pdf.");
-        assert_eq!(render(Some(&fr), "general.voice", &[]), "Voice");
+        assert_eq!(render(Some(&fr), &[], "file.opening", &[("name", &name)]), "Ouverture de notes.pdf.");
+        assert_eq!(render(Some(&fr), &[], "general.voice", &[]), "Voice");
     }
 
     #[test]

@@ -40,6 +40,11 @@ pub struct Settings {
     pub speaker_labels: SpeakerLabels,
     /// Play a sound when something succeeds or fails.
     pub sounds: bool,
+    /// Whether keyboard shortcuts work at all.
+    pub shortcuts_enabled: bool,
+    /// Shortcuts changed from the defaults, keyed by action, such as
+    /// "pause": "Ctrl+J". "off" turns one off. See `shortcuts.rs`.
+    pub shortcuts: BTreeMap<String, String>,
 }
 
 impl Default for Settings {
@@ -61,6 +66,8 @@ impl Default for Settings {
             whisper_model: WhisperModel::Base,
             speaker_labels: SpeakerLabels::Off,
             sounds: true,
+            shortcuts_enabled: true,
+            shortcuts: BTreeMap::new(),
         }
     }
 }

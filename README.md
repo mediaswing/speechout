@@ -183,22 +183,52 @@ wordlists, or remove ones you no longer need.
 
 ## Keyboard
 
+These keys always work, whatever the shortcut settings:
+
 | Keys | Action |
 | --- | --- |
-| Tab / Shift+Tab | Move between controls |
+| Tab / Shift+Tab | Move between controls. Tab also moves out of the text box |
 | Space or Enter | Press a button, tick a box or open a dropdown |
 | Up / Down / Home / End | Change the choice in a focused dropdown without opening it |
-| Ctrl+1, Ctrl+2, Ctrl+3, Ctrl+4 | Go to the General, Settings, Wordlists or Audio Player tab |
-| Ctrl+Tab / Ctrl+Shift+Tab | Next or previous tab |
-| Ctrl+O | Choose a file (an audio file on the Audio Player tab) |
-| F5 | Read aloud (play the audio file on the Audio Player tab) |
-| F6 | Pause or resume. While an audio file is playing, pauses or resumes it |
-| F7 | Hear how far through reading or saving you are. While an audio file is playing, hear the time, such as "1 minute 5 seconds of 3 minutes" |
-| Escape | Stop reading, cancel saving, or stop transcribing. While an audio file is playing or being opened, stops it |
-| Ctrl+S | Save the spoken text as audio (save the transcript on the Audio Player tab) |
+| Alt+Down / Alt+Up (Option on a Mac) | Open or close a focused dropdown's list |
+| Left / Right / Home / End | Move between tabs while a tab has focus |
+| Escape | Close an open list. Escape never takes focus away from the control you are on |
 | Ctrl+Plus / Ctrl+Minus / Ctrl+0 | Make everything larger, smaller, or reset the size |
 
-On a Mac, use Command instead of Ctrl, except for Ctrl+Tab.
+These are the shortcuts to start with. Each one can be changed or turned off
+under "Keyboard shortcuts" on the Settings tab, and all of them can be turned
+off at once. Press F1 to see the ones in use.
+
+| Windows and Linux | Mac | Action |
+| --- | --- | --- |
+| Ctrl+O | Cmd+O | Choose a file (an audio file on the Audio Player tab) |
+| Ctrl+S | Cmd+S | Save the spoken text as audio (save the transcript on the Audio Player tab) |
+| Ctrl+1 to Ctrl+4 | Cmd+1 to Cmd+4 | Go to the General, Settings, Wordlists or Audio Player tab |
+| Ctrl+Tab / Ctrl+Shift+Tab | Ctrl+Tab / Ctrl+Shift+Tab | Next or previous tab |
+| F5 | F5 or Cmd+R | Read aloud (play the audio file on the Audio Player tab) |
+| F6 | F6 | Pause or resume. While an audio file is playing, pauses or resumes it |
+| F7 | F7 | Hear how far through reading or saving you are. While an audio file is playing, hear the time, such as "1 minute 5 seconds of 3 minutes" |
+| Escape | Escape or Cmd+. | Stop reading, cancel saving, stop a download or stop transcribing. While an audio file is playing or being opened, stops it |
+| F1 | F1 | List the keyboard shortcuts |
+
+On most Mac keyboards, F1 to F12 control the computer unless you hold Fn, so
+Cmd+R and Cmd+. work too, and Pause or resume can be given a shortcut such as
+Cmd+J.
+
+The shortcuts are chosen so they don't get in the way of screen readers or
+typing:
+
+- None of them is a single letter, digit or symbol. Screen readers use those
+  keys to move around (NVDA and JAWS browse mode, Narrator scan mode,
+  VoiceOver Quick Nav).
+- None uses Insert, Caps Lock, Alt or Option. Screen readers use these keys
+  for their own commands, Ctrl+Alt is AltGr on many keyboards, and Option
+  types characters on a Mac.
+- Shortcuts only work when the exact keys are held, so typing a character
+  such as ś with AltGr+S never saves.
+- When you change a shortcut, the lists only offer keys that pass these
+  checks and that nothing else in the app uses.
+- Every command also has a button.
 
 A thick outline (blue in light mode, yellow in dark mode) shows which control
 has focus. The app follows your system's light or dark setting.

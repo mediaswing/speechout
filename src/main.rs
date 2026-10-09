@@ -13,6 +13,7 @@ mod platform;
 mod playlist;
 mod secrets;
 mod settings;
+mod shortcuts;
 mod speakers;
 mod speech;
 mod spoken;

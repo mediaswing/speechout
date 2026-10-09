@@ -16,13 +16,14 @@ use crate::audio::{AudioFormat, Cue, Listened, SoundKind};
 use crate::i18n::{self, Language, Translation, t, tf};
 use crate::playlist::Playlist;
 use crate::settings::Settings;
+use crate::shortcuts::{self, Action, Command, KeyContext, Keymap, Platform, Shortcut};
 use crate::speech::{self, Provider, Voice};
 use crate::speakers::SpeakerLabels;
 use crate::transcribe::WhisperModel;
 use crate::wordlist::{self, Installed, Substitutions};
 use crate::worker::{self, Control, Msg, Reporter, SpeechJob};
 use egui::accesskit::{Live, Role};
-use egui::{Button, Color32, EventFilter, Id, Key, KeyboardShortcut, Modifiers, RichText, Ui};
+use egui::{Button, Color32, EventFilter, Id, Key, Modifiers, RichText, Ui};
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -36,12 +37,6 @@ const CONTROL_HEIGHT: f32 = 36.0;
 /// Spoken by the Preview voice button. Kept short because cloud services
 /// charge by the character.
 const PREVIEW_TEXT: &str = "This is a preview of the selected voice.";
-
-/// The command key as printed on buttons and as spoken in status messages.
-#[cfg(target_os = "macos")]
-const MOD_KEY: (&str, &str) = ("Cmd", "Command");
-#[cfg(not(target_os = "macos"))]
-const MOD_KEY: (&str, &str) = ("Ctrl", "Control");
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum Tab {
@@ -173,6 +168,12 @@ pub struct SpeechApp {
     /// Transcribe the audio file once the Whisper model has downloaded.
     transcribe_after_download: bool,
     cues: crate::audio::Cues,
+    keymap: Keymap,
+    /// Shortcuts pressed since the last frame, taken from the input before
+    /// egui saw it.
+    pending: Vec<Command>,
+    /// The tab buttons' ids last frame, to tell when one has focus.
+    tab_buttons: Vec<Id>,
 }
 
 impl SpeechApp {
@@ -197,6 +198,8 @@ impl SpeechApp {
             .filter_map(|p| Some((*p, crate::secrets::get(p.key_name()?)?)))
             .collect();
 
+        let keymap = Keymap::new(settings.shortcuts_enabled, &settings.shortcuts, Platform::CURRENT);
+        i18n::set_hints(keymap.hints());
         let mut app = Self {
             log_dir_input: settings.log_dir().display().to_string(),
             settings,
@@ -220,7 +223,7 @@ impl SpeechApp {
             paused: false,
             checking_update: false,
             progress: 0.0,
-            status: format!("{} {log_status}", tf("status.ready", &[("key_name", &MOD_KEY.1)])),
+            status: format!("{} {log_status}", t("status.ready")),
             wordlists: Vec::new(),
             wordlist_to_remove: 0,
             languages: i18n::available(&crate::paths::languages_dir()),
@@ -236,6 +239,9 @@ impl SpeechApp {
             transcribe_when_free: false,
             transcribe_after_download: false,
             cues: crate::audio::Cues::default(),
+            keymap,
+            pending: Vec::new(),
+            tab_buttons: Vec::new(),
         };
         app.reload_wordlists();
         // Ask Ollama for its models now (a quick local request), so photos can
@@ -511,7 +517,7 @@ impl SpeechApp {
                             self.source = Source::File;
                             self.announce(tf(
                                 "file.loaded",
-                                &[("name", &name), ("count", &words), ("key_name", &MOD_KEY.1)],
+                                &[("name", &name), ("count", &words)],
                             ));
                             self.cue(Cue::Success);
                         }
@@ -786,7 +792,7 @@ impl SpeechApp {
         }
         if self.current_text().trim().is_empty() {
             let msg = match self.source {
-                Source::File => tf("read.nothing", &[("key_name", &MOD_KEY.1)]),
+                Source::File => t("read.nothing"),
                 Source::Paste => t("read.nothing_pasted"),
             };
             self.announce(msg);
@@ -914,11 +920,12 @@ impl SpeechApp {
         let Some(mut job) = self.build_job() else { return };
         // A saved photo description ends by saying how it was made, since
         // the listener cannot tell from the audio alone.
-        let is_image = self
-            .file
-            .as_deref()
-            .and_then(crate::document::FileKind::from_path)
-            .is_some_and(|k| k == crate::document::FileKind::Image);
+        let is_image = self.source == Source::File
+            && self
+                .file
+                .as_deref()
+                .and_then(crate::document::FileKind::from_path)
+                .is_some_and(|k| k == crate::document::FileKind::Image);
         if is_image {
             job.text = format!("{}\n\n{}", job.text.trim_end(), job.provider.image_description_note());
         }
@@ -926,8 +933,7 @@ impl SpeechApp {
         self.job = Some((JobKind::Saving, control.clone()));
         self.progress = 0.0;
         let usage = Self::usage_note(&job, false);
-        let preparing = tf("save.preparing", &[("name", &file_name(&path))]);
-        self.announce(format!("{preparing}{usage} {}", t("save.cancel_hint")));
+        self.announce(tf("save.preparing", &[("name", &file_name(&path)), ("usage", &usage)]));
         self.rep.spawn(move |rep| worker::save(rep, control, job, path, format));
     }
 
@@ -1371,7 +1377,7 @@ impl SpeechApp {
             if let Some(p) = &self.playlist {
                 return self.open_track(p.current, true, String::new());
             }
-            self.announce(tf("player.nothing", &[("key_name", &MOD_KEY.1)]));
+            self.announce(t("player.nothing"));
             return;
         }
         if self.start_playing() {
@@ -1555,7 +1561,7 @@ impl SpeechApp {
                 if self.audio.as_ref().is_some_and(|(p, _)| *p == path) {
                     self.transcript = done.text;
                     let mut msg =
-                        tf("transcript.done", &[("name", &name), ("count", &done.words), ("key_name", &MOD_KEY.1)]);
+                        tf("transcript.done", &[("name", &name), ("count", &done.words)]);
                     match done.speakers {
                         Some(1) => msg = format!("{msg} {}", t("speakers.found_one")),
                         Some(n) => msg = format!("{msg} {}", tf("speakers.found", &[("count", &n)])),
@@ -1613,51 +1619,99 @@ impl SpeechApp {
 
     // ----- keyboard -----------------------------------------------------
 
-    fn handle_shortcuts(&mut self, ctx: &egui::Context) {
-        let cmd = |key| KeyboardShortcut::new(Modifiers::COMMAND, key);
-        let pressed = |s: KeyboardShortcut| ctx.input_mut(|i| i.consume_shortcut(&s));
-        let popup_open = ctx.any_popup_open();
+    /// Something can be stopped: reading, saving, a download, a translation,
+    /// a transcription, or an audio file opening or playing.
+    fn can_stop(&self) -> bool {
+        self.audio_player.is_some() || self.audio_loader.is_some() || self.is_busy()
+    }
 
-        for (key, tab) in [Key::Num1, Key::Num2, Key::Num3, Key::Num4].into_iter().zip(Tab::ALL) {
-            if pressed(cmd(key)) {
-                self.switch_tab(tab);
+    /// Takes shortcut key presses out of the input before egui sees it, so
+    /// egui's own handling (Escape dropping focus, arrows moving focus)
+    /// doesn't also happen. The commands run in `run_shortcuts`.
+    fn take_shortcuts(&mut self, ctx: &egui::Context, raw_input: &mut egui::RawInput) {
+        let focused = ctx.memory(|m| m.focused());
+        let cx = KeyContext {
+            // Read from memory: this runs between frames, when egui's
+            // per-frame record of open popups isn't kept.
+            popup_open: egui::Popup::is_any_open(ctx),
+            focused_tab: focused.and_then(|id| self.tab_buttons.iter().position(|b| *b == id)),
+            tab_count: Tab::ALL.len(),
+        };
+        let can_stop = self.can_stop();
+        let ready = |a: Action| !matches!(a, Action::Stop | Action::StopSecond) || can_stop;
+        let commands = self.keymap.take(&mut raw_input.events, cx, ready);
+        self.pending.extend(commands);
+    }
+
+    fn run_shortcuts(&mut self) {
+        for command in std::mem::take(&mut self.pending) {
+            match command {
+                Command::Tab(i) => {
+                    if let Some(tab) = Tab::ALL.get(i) {
+                        self.switch_tab(*tab);
+                    }
+                }
+                Command::Run(action) => self.run_action(action),
             }
         }
-        let count = Tab::ALL.len();
-        if pressed(KeyboardShortcut::new(Modifiers::CTRL | Modifiers::SHIFT, Key::Tab)) {
-            let i = Tab::ALL.iter().position(|t| *t == self.tab).unwrap_or(0);
-            self.switch_tab(Tab::ALL[(i + count - 1) % count]);
-        } else if pressed(KeyboardShortcut::new(Modifiers::CTRL, Key::Tab)) {
-            let i = Tab::ALL.iter().position(|t| *t == self.tab).unwrap_or(0);
-            self.switch_tab(Tab::ALL[(i + 1) % count]);
-        }
+    }
+
+    fn run_action(&mut self, action: Action) {
         // On the Audio Player tab, the usual keys work on the audio file.
         let on_player = self.tab == Tab::Player;
-        if pressed(cmd(Key::O)) {
-            if on_player { self.choose_audio() } else { self.choose_file() }
-        }
-        if pressed(cmd(Key::S)) {
-            if on_player { self.save_transcript() } else { self.save_audio() }
-        }
-        if pressed(KeyboardShortcut::new(Modifiers::NONE, Key::F5)) {
-            if on_player { self.play_audio() } else { self.read_aloud() }
-        }
-        // F6, F7 and Escape work on the audio file wherever it is playing.
+        // Pause, progress and stop work on the audio file wherever it plays.
         let audio_playing = self.audio_player.is_some();
-        if pressed(KeyboardShortcut::new(Modifiers::NONE, Key::F6)) {
-            if audio_playing { self.toggle_audio_pause() } else { self.toggle_pause() }
+        let count = Tab::ALL.len();
+        let current = Tab::ALL.iter().position(|t| *t == self.tab).unwrap_or(0);
+        match action {
+            Action::Open => {
+                if on_player { self.choose_audio() } else { self.choose_file() }
+            }
+            Action::Save => {
+                if on_player { self.save_transcript() } else { self.save_audio() }
+            }
+            Action::NextTab => self.switch_tab(Tab::ALL[(current + 1) % count]),
+            Action::PreviousTab => self.switch_tab(Tab::ALL[(current + count - 1) % count]),
+            // Handled as `Command::Tab`.
+            Action::GoToTab => {}
+            Action::Read | Action::ReadSecond => {
+                if on_player { self.play_audio() } else { self.read_aloud() }
+            }
+            Action::Pause => {
+                if audio_playing { self.toggle_audio_pause() } else { self.toggle_pause() }
+            }
+            Action::Progress => {
+                if audio_playing { self.announce_audio_position() } else { self.announce_progress() }
+            }
+            Action::Stop | Action::StopSecond => {
+                // Stopping also stops an audio file being opened.
+                if audio_playing || self.audio_loader.is_some() { self.stop_audio() } else { self.stop() }
+            }
+            Action::Help => self.show_shortcuts(),
         }
-        if pressed(KeyboardShortcut::new(Modifiers::NONE, Key::F7)) {
-            if audio_playing { self.announce_audio_position() } else { self.announce_progress() }
-        }
-        // Escape also stops an audio file being opened.
-        let audio_active = audio_playing || self.audio_loader.is_some();
-        if !popup_open
-            && (audio_active || self.is_busy())
-            && pressed(KeyboardShortcut::new(Modifiers::NONE, Key::Escape))
-        {
-            if audio_active { self.stop_audio() } else { self.stop() }
-        }
+    }
+
+    /// `key`'s text with " (F5)" or similar filled in for `{shortcut}`, or
+    /// nothing when `action` has no shortcut.
+    fn keyed(&self, key: &str, action: Action) -> String {
+        tf(key, &[("shortcut", &self.keymap.hint(action))])
+    }
+
+    /// Lists the shortcuts in a dialog, which screen readers read out when
+    /// it opens.
+    fn show_shortcuts(&mut self) {
+        rfd::MessageDialog::new()
+            .set_title(t("shortcuts.dialog_title"))
+            .set_description(self.keymap.reference())
+            .set_buttons(rfd::MessageButtons::Ok)
+            .set_level(rfd::MessageLevel::Info)
+            .show();
+    }
+
+    fn set_shortcuts(&mut self) {
+        self.keymap = Keymap::new(self.settings.shortcuts_enabled, &self.settings.shortcuts, Platform::CURRENT);
+        i18n::set_hints(self.keymap.hints());
+        self.settings.save();
     }
 
     fn switch_tab(&mut self, tab: Tab) {
@@ -1668,6 +1722,7 @@ impl SpeechApp {
     // ----- drawing ------------------------------------------------------
 
     fn tab_bar(&mut self, ui: &mut Ui) {
+        self.tab_buttons.clear();
         ui.columns(Tab::ALL.len(), |cols| {
             for (col, tab) in cols.iter_mut().zip(Tab::ALL) {
                 let selected = self.tab == tab;
@@ -1678,6 +1733,7 @@ impl SpeechApp {
                         ui.add_sized([ui.available_width(), 40.0], Button::selectable(selected, text))
                     })
                     .inner;
+                self.tab_buttons.push(resp.id);
                 col.ctx().accesskit_node_builder(resp.id, |node| {
                     node.set_role(Role::Tab);
                     node.set_selected(selected);
@@ -1702,7 +1758,7 @@ impl SpeechApp {
         if dropdown(ui, "source", &t("general.source"), &labels, &mut sindex, !self.is_busy()) {
             self.source = Source::ALL[sindex];
             self.announce(match self.source {
-                Source::File => tf("general.source_chosen_file", &[("key_name", &MOD_KEY.1)]),
+                Source::File => t("general.source_chosen_file"),
                 Source::Paste => t("general.source_chosen_paste"),
             });
         }
@@ -1716,20 +1772,14 @@ impl SpeechApp {
                 };
                 text_field(ui, &t("general.current_file"), &mut file_text, false);
 
-                let label = tf("general.choose_file", &[("key", &MOD_KEY.0)]);
+                let label = self.keyed("general.choose_file", Action::Open);
                 if full_button(ui, &label, !self.loading_file).clicked() {
                     self.choose_file();
                 }
             }
             Source::Paste => {
-                let label = ui.label(t("general.pasted"));
                 let enabled = !self.is_busy();
-                let edit = egui::TextEdit::multiline(&mut self.pasted)
-                    .id_salt("pasted_text")
-                    .char_limit(crate::document::MAX_PASTED_CHARS)
-                    .desired_width(f32::INFINITY)
-                    .desired_rows(10);
-                let resp = ui.add_enabled(enabled, edit).labelled_by(label.id);
+                let resp = paste_box(ui, &t("general.pasted"), &mut self.pasted, enabled);
                 if resp.changed() {
                     self.pasted_text = crate::document::clean_pasted(&self.pasted);
                     if self.pasted.chars().count() >= crate::document::MAX_PASTED_CHARS {
@@ -1798,19 +1848,19 @@ impl SpeechApp {
 
         let has_text = !self.current_text().is_empty();
         let speaking = matches!(self.job, Some((JobKind::Speaking, _)));
-        if full_button(ui, &t("general.read_aloud"), has_text && !self.is_busy()).clicked() {
+        if full_button(ui, &self.keyed("general.read_aloud", Action::Read), has_text && !self.is_busy()).clicked() {
             self.read_aloud();
         }
-        let pause_label = if self.paused { t("general.resume") } else { t("general.pause") };
+        let pause_label = self.keyed(if self.paused { "general.resume" } else { "general.pause" }, Action::Pause);
         if full_button(ui, &pause_label, speaking).clicked() {
             self.toggle_pause();
         }
         let stop_label = match self.job {
-            Some((JobKind::Saving, _)) => t("general.cancel_saving"),
-            Some((JobKind::Downloading, _)) => t("general.stop_downloading"),
-            Some((JobKind::Translating, _)) => t("general.stop_translating"),
+            Some((JobKind::Saving, _)) => self.keyed("general.cancel_saving", Action::Stop),
+            Some((JobKind::Downloading, _)) => self.keyed("general.stop_downloading", Action::Stop),
+            Some((JobKind::Translating, _)) => self.keyed("general.stop_translating", Action::Stop),
             Some((JobKind::Transcribing, _)) => self.stop_transcribing_label(),
-            _ => t("general.stop"),
+            _ => self.keyed("general.stop", Action::Stop),
         };
         if full_button(ui, &stop_label, self.is_busy()).clicked() {
             self.stop();
@@ -1823,7 +1873,7 @@ impl SpeechApp {
             self.settings.audio_format = formats[findex];
             self.settings.save();
         }
-        if full_button(ui, &tf("general.save", &[("key", &MOD_KEY.0)]), has_text && !self.is_busy()).clicked() {
+        if full_button(ui, &self.keyed("general.save", Action::Save), has_text && !self.is_busy()).clicked() {
             self.save_audio();
         }
         if full_button(ui, &t("general.copy"), has_text).clicked() {
@@ -1940,6 +1990,55 @@ impl SpeechApp {
         }
         if full_button(ui, &t("keys.remove"), !self.api_keys.is_empty()).clicked() {
             self.remove_keys();
+        }
+
+        self.shortcuts_section(ui);
+    }
+
+    /// Turns shortcuts on or off, and lets each be changed or turned off.
+    /// Each list offers only shortcuts that pass the conflict checks in
+    /// `shortcuts.rs` and that no other action uses, so picking one can
+    /// never take a key from somewhere else.
+    fn shortcuts_section(&mut self, ui: &mut Ui) {
+        ui.add_space(8.0);
+        heading(ui, &t("shortcuts.heading"));
+        let options = vec![t("shortcuts.use_on"), t("shortcuts.use_off")];
+        let mut index = usize::from(!self.settings.shortcuts_enabled);
+        if dropdown(ui, "shortcuts", &t("shortcuts.use"), &options, &mut index, true) {
+            self.settings.shortcuts_enabled = index == 0;
+            self.set_shortcuts();
+            self.announce(t(if index == 0 { "shortcuts.turned_on" } else { "shortcuts.turned_off" }));
+        }
+        let platform = self.keymap.platform();
+        for action in Action::ALL {
+            let choices: Vec<Shortcut> = action
+                .choices(platform)
+                .into_iter()
+                .filter(|s| self.keymap.used_by(*s, action).is_none())
+                .collect();
+            let mut labels = vec![t("shortcuts.none")];
+            labels.extend(choices.iter().map(|s| self.keymap.describe(action, *s)));
+            let current = self.keymap.binding(action);
+            let mut index = current.and_then(|c| choices.iter().position(|s| *s == c)).map_or(0, |i| i + 1);
+            if dropdown(ui, &format!("shortcut_{}", action.id()), &action.label(), &labels, &mut index, true) {
+                let chosen = index.checked_sub(1).and_then(|i| choices.get(i).copied());
+                if chosen == action.default_shortcut(platform) {
+                    self.settings.shortcuts.remove(action.id());
+                } else {
+                    let text = chosen.map_or_else(|| shortcuts::OFF.to_owned(), |s| s.to_text(platform));
+                    self.settings.shortcuts.insert(action.id().to_owned(), text);
+                }
+                self.set_shortcuts();
+            }
+        }
+        ui.label(t("shortcuts.note"));
+        if full_button(ui, &self.keyed("shortcuts.show", Action::Help), true).clicked() {
+            self.show_shortcuts();
+        }
+        if full_button(ui, &t("shortcuts.reset"), !self.settings.shortcuts.is_empty()).clicked() {
+            self.settings.shortcuts.clear();
+            self.set_shortcuts();
+            self.announce(t("shortcuts.reset_done"));
         }
     }
 
@@ -2072,7 +2171,7 @@ impl SpeechApp {
             (None, _, _) => t("general.no_file"),
         };
         text_field(ui, &t("general.current_file"), &mut file_text, false);
-        let label = tf("player.choose", &[("key", &MOD_KEY.0)]);
+        let label = self.keyed("player.choose", Action::Open);
         if full_button(ui, &label, self.audio_loader.is_none() && !transcribing).clicked() {
             self.choose_audio();
         }
@@ -2108,14 +2207,14 @@ impl SpeechApp {
         let has_audio = self.audio.is_some();
         let playing = self.audio_player.is_some();
         let speaking = matches!(self.job, Some((JobKind::Speaking | JobKind::Previewing, _)));
-        if full_button(ui, &t("player.play"), has_audio && !playing && !speaking).clicked() {
+        if full_button(ui, &self.keyed("player.play", Action::Read), has_audio && !playing && !speaking).clicked() {
             self.play_audio();
         }
-        let pause_label = if self.audio_paused { t("general.resume") } else { t("general.pause") };
+        let pause_label = self.keyed(if self.audio_paused { "general.resume" } else { "general.pause" }, Action::Pause);
         if full_button(ui, &pause_label, playing).clicked() {
             self.toggle_audio_pause();
         }
-        if full_button(ui, &t("general.stop"), playing || self.audio_loader.is_some()).clicked() {
+        if full_button(ui, &self.keyed("general.stop", Action::Stop), playing || self.audio_loader.is_some()).clicked() {
             self.stop_audio();
         }
         if full_button(ui, &t("player.back"), has_audio).clicked() {
@@ -2161,7 +2260,7 @@ impl SpeechApp {
             let ctx = ui.ctx().clone();
             self.copy_transcript(&ctx);
         }
-        if full_button(ui, &tf("transcript.save", &[("key", &MOD_KEY.0)]), has_transcript).clicked() {
+        if full_button(ui, &self.keyed("transcript.save", Action::Save), has_transcript).clicked() {
             self.save_transcript();
         }
     }
@@ -2169,7 +2268,7 @@ impl SpeechApp {
     /// While the audio file plays, Escape stops it rather than transcribing,
     /// so the button doesn't offer Escape then.
     fn stop_transcribing_label(&self) -> String {
-        if self.audio_player.is_some() { t("transcript.stop") } else { t("general.stop_transcribing") }
+        if self.audio_player.is_some() { t("transcript.stop") } else { self.keyed("general.stop_transcribing", Action::Stop) }
     }
 
     /// How far through the audio file playback is, from 0.0 to 1.0.
@@ -2241,11 +2340,15 @@ impl SpeechApp {
 }
 
 impl eframe::App for SpeechApp {
+    fn raw_input_hook(&mut self, ctx: &egui::Context, raw_input: &mut egui::RawInput) {
+        self.take_shortcuts(ctx, raw_input);
+    }
+
     fn ui(&mut self, ui: &mut Ui, _frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
         self.fit_to_screen(&ctx);
         self.handle_messages();
-        self.handle_shortcuts(&ctx);
+        self.run_shortcuts();
 
         egui::Panel::top("tabs").show(ui, |ui| {
             ui.add_space(4.0);
@@ -2365,6 +2468,19 @@ fn text_field(ui: &mut Ui, label: &str, value: &mut String, editable: bool) -> e
     resp
 }
 
+/// The box for typing or pasting text to read aloud. Tab and Shift+Tab move
+/// out of it rather than typing a tab, so keyboard users are never trapped.
+fn paste_box(ui: &mut Ui, label: &str, value: &mut String, enabled: bool) -> egui::Response {
+    let label = ui.label(label);
+    let edit = egui::TextEdit::multiline(value)
+        .id_salt("pasted_text")
+        .lock_focus(false)
+        .char_limit(crate::document::MAX_PASTED_CHARS)
+        .desired_width(f32::INFINITY)
+        .desired_rows(10);
+    ui.add_enabled(enabled, edit).labelled_by(label.id)
+}
+
 /// A read-only box of several lines that a screen reader can review.
 fn text_area(ui: &mut Ui, label: &str, value: &str) {
     let label = ui.label(label);
@@ -2412,7 +2528,8 @@ fn password_field(ui: &mut Ui, label: &str, value: &mut String) {
 
 /// A labelled, full-width dropdown. While it has focus and is closed, the Up,
 /// Down, Home and End keys change the choice directly, as in a native combo
-/// box; Space or Enter opens the list.
+/// box; Space, Enter or Alt+Down (Option+Down on a Mac) opens the list, and
+/// Alt+Up or Escape closes it.
 fn dropdown(ui: &mut Ui, id_salt: &str, label: &str, options: &[String], selected: &mut usize, enabled: bool) -> bool {
     let label_resp = ui.label(label);
     let mut changed = false;
@@ -2438,20 +2555,28 @@ fn dropdown(ui: &mut Ui, id_salt: &str, label: &str, options: &[String], selecte
     let combo = inner.inner;
     let resp = combo.response.labelled_by(label_resp.id);
     let popup_open = combo.inner.is_some();
+    // Where egui keeps whether this dropdown's list is open.
+    let popup_id = resp.id.with("popup");
 
+    if enabled && popup_open && ui.input_mut(|i| consume_exact(i, Modifiers::ALT, Key::ArrowUp)) {
+        egui::Popup::close_id(ui.ctx(), popup_id);
+    }
     if enabled && resp.has_focus() && !popup_open && !options.is_empty() {
         ui.memory_mut(|m| {
             m.set_focus_lock_filter(resp.id, EventFilter { vertical_arrows: true, ..Default::default() })
         });
+        if ui.input_mut(|i| consume_exact(i, Modifiers::ALT, Key::ArrowDown)) {
+            egui::Popup::open_id(ui.ctx(), popup_id);
+        }
         let last = options.len() - 1;
         let new = ui.input_mut(|i| {
-            if i.consume_key(Modifiers::NONE, Key::ArrowDown) {
+            if consume_exact(i, Modifiers::NONE, Key::ArrowDown) {
                 Some((*selected + 1).min(last))
-            } else if i.consume_key(Modifiers::NONE, Key::ArrowUp) {
+            } else if consume_exact(i, Modifiers::NONE, Key::ArrowUp) {
                 Some(selected.saturating_sub(1))
-            } else if i.consume_key(Modifiers::NONE, Key::Home) {
+            } else if consume_exact(i, Modifiers::NONE, Key::Home) {
                 Some(0)
-            } else if i.consume_key(Modifiers::NONE, Key::End) {
+            } else if consume_exact(i, Modifiers::NONE, Key::End) {
                 Some(last)
             } else {
                 None
@@ -2470,6 +2595,17 @@ fn dropdown(ui: &mut Ui, id_salt: &str, label: &str, options: &[String], selecte
         node.set_value(value);
     });
     changed
+}
+
+/// Takes a press of `key` with exactly `modifiers` out of the input. egui's
+/// own `consume_key` ignores extra Shift and Alt, so Alt+Down would count as
+/// Down.
+fn consume_exact(input: &mut egui::InputState, modifiers: Modifiers, key: Key) -> bool {
+    let before = input.events.len();
+    input.events.retain(|e| {
+        !matches!(e, egui::Event::Key { key: k, pressed: true, modifiers: m, .. } if *k == key && m.matches_exact(modifiers))
+    });
+    input.events.len() != before
 }
 
 /// Draws a thick, high-contrast outline around the focused control.
@@ -2545,5 +2681,121 @@ fn display_name(item: &Installed) -> String {
     match &item.list {
         Ok(list) => format!("{} ({})", list.name, item.file_name),
         Err(_) => item.file_name.clone(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use egui::{Event, RawInput};
+    use std::collections::BTreeMap;
+
+    fn press(key: Key, modifiers: Modifiers) -> Event {
+        Event::Key { key, physical_key: None, pressed: true, repeat: false, modifiers }
+    }
+
+    /// Runs one frame of `ui_fn` with `events` as the input.
+    fn frame(ctx: &egui::Context, events: Vec<Event>, ui_fn: &mut impl FnMut(&mut Ui)) {
+        let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(800.0, 600.0));
+        let input = RawInput { events, screen_rect: Some(screen), ..Default::default() };
+        let mut output = ctx.run_ui(input, |ui| ui_fn(ui));
+        output.textures_delta.clear();
+    }
+
+    fn focused(ctx: &egui::Context) -> Option<Id> {
+        ctx.memory(|m| m.focused())
+    }
+
+    /// Presses Tab and lets egui move focus.
+    fn tab(ctx: &egui::Context, ui_fn: &mut impl FnMut(&mut Ui)) {
+        frame(ctx, vec![press(Key::Tab, Modifiers::NONE)], ui_fn);
+        frame(ctx, vec![], ui_fn);
+    }
+
+    #[test]
+    fn dropdown_keys() {
+        let ctx = egui::Context::default();
+        let options: Vec<String> = ["One", "Two", "Three"].map(String::from).to_vec();
+        let mut selected = 0;
+        let mut changes = 0;
+        let mut ui_fn = |ui: &mut Ui| {
+            if dropdown(ui, "test", "Number", &options, &mut selected, true) {
+                changes += 1;
+            }
+        };
+        frame(&ctx, vec![], &mut ui_fn);
+        tab(&ctx, &mut ui_fn);
+        assert!(focused(&ctx).is_some(), "Tab moves focus to the dropdown");
+
+        frame(&ctx, vec![press(Key::ArrowDown, Modifiers::NONE)], &mut ui_fn);
+        frame(&ctx, vec![press(Key::End, Modifiers::NONE)], &mut ui_fn);
+        frame(&ctx, vec![press(Key::ArrowUp, Modifiers::NONE)], &mut ui_fn);
+        // Shift+Down is not Down.
+        frame(&ctx, vec![press(Key::ArrowDown, Modifiers::SHIFT)], &mut ui_fn);
+        assert_eq!((selected, changes), (1, 3));
+
+        let mut ui_fn = |ui: &mut Ui| {
+            dropdown(ui, "test", "Number", &options, &mut selected, true);
+        };
+        // Alt+Down opens the list without changing the choice; Alt+Up closes it.
+        frame(&ctx, vec![press(Key::ArrowDown, Modifiers::ALT)], &mut ui_fn);
+        frame(&ctx, vec![], &mut ui_fn);
+        assert!(egui::Popup::is_any_open(&ctx), "Alt+Down opens the list");
+        frame(&ctx, vec![press(Key::ArrowUp, Modifiers::ALT)], &mut ui_fn);
+        frame(&ctx, vec![], &mut ui_fn);
+        assert!(!egui::Popup::is_any_open(&ctx), "Alt+Up closes the list");
+        assert_eq!(selected, 1);
+    }
+
+    #[test]
+    fn tab_leaves_the_paste_box() {
+        let ctx = egui::Context::default();
+        let mut text = String::new();
+        let boxed = std::cell::Cell::new(None);
+        let mut ui_fn = |ui: &mut Ui| {
+            boxed.set(Some(paste_box(ui, "Text", &mut text, true).id));
+            let _ = ui.button("After");
+        };
+        frame(&ctx, vec![], &mut ui_fn);
+        tab(&ctx, &mut ui_fn);
+        let box_id = boxed.get().unwrap();
+        assert_eq!(focused(&ctx), Some(box_id));
+
+        frame(&ctx, vec![Event::Text("Hello".into())], &mut ui_fn);
+        tab(&ctx, &mut ui_fn);
+        assert_ne!(focused(&ctx), Some(box_id), "Tab moves on instead of typing a tab");
+        assert!(focused(&ctx).is_some());
+        assert_eq!(text, "Hello");
+    }
+
+    #[test]
+    fn escape_keeps_focus_and_shortcuts_skip_text() {
+        let ctx = egui::Context::default();
+        let keymap = Keymap::new(true, &BTreeMap::new(), Platform::Windows);
+        let cx = KeyContext { tab_count: 4, ..KeyContext::default() };
+        let mut text = String::new();
+        let mut ui_fn = |ui: &mut Ui| {
+            paste_box(ui, "Text", &mut text, true);
+        };
+        frame(&ctx, vec![], &mut ui_fn);
+        tab(&ctx, &mut ui_fn);
+        let box_id = focused(&ctx).expect("the box has focus");
+
+        // Nothing is running, so Escape doesn't stop anything, and is taken
+        // out before egui would drop focus.
+        let mut events = vec![press(Key::Escape, Modifiers::NONE)];
+        assert!(keymap.take(&mut events, cx, |a| a != Action::Stop).is_empty());
+        frame(&ctx, events, &mut ui_fn);
+        assert_eq!(focused(&ctx), Some(box_id));
+
+        // Typing goes into the box even with shortcuts on, including AltGr
+        // characters, while the shortcut keys themselves are taken.
+        let altgr = Modifiers { alt: true, ctrl: true, command: true, ..Modifiers::NONE };
+        let mut events =
+            vec![press(Key::S, altgr), Event::Text("ś".into()), press(Key::F5, Modifiers::NONE), Event::Text("h".into())];
+        let commands = keymap.take(&mut events, cx, |_| true);
+        assert_eq!(commands, vec![Command::Run(Action::Read)]);
+        frame(&ctx, events, &mut ui_fn);
+        assert_eq!(text, "śh");
     }
 }

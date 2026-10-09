@@ -12,6 +12,16 @@ the app.
 
 ### Added
 
+- Keyboard shortcuts can now be changed or turned off, one at a time or all
+  at once, under "Keyboard shortcuts" on the Settings tab. The lists only
+  offer keys that don't clash with screen readers, the operating system or
+  typing, and button labels and spoken hints follow your choices.
+- Press F1 to see a list of the keyboard shortcuts.
+- On a Mac, Cmd+R reads aloud or plays, and Cmd+. stops, because the F keys
+  need Fn on most Mac keyboards.
+- While a tab has focus, the Left and Right arrows, Home and End move between
+  tabs.
+- Alt+Down (Option+Down on a Mac) opens a focused list, and Alt+Up closes it.
 - The General tab has a new "Text to read" list. Choose "Paste Text" to type
   or paste text into a box and read it aloud or save it as audio, without
   making a file first. Choose "Choose File" to read a file as before. Choosing
@@ -21,6 +31,11 @@ the app.
 
 ### Fixed
 
+- Shortcuts no longer go off when extra keys are held. Typing a character
+  with AltGr, such as ś (AltGr+S) or ó (AltGr+O) on a Polish keyboard, could
+  open the Save or Open dialog, and AltGr with a number could switch tabs.
+- Pressing Escape when nothing was running took focus away from the control,
+  so screen readers lost their place. Now focus stays where it was.
 - On a Mac, text between double square brackets, such as `[[volm 0]]`, was
   taken by the system voice as a command, so a document could silence the
   voice, add long pauses or change how it spoke. Now it is read as ordinary
