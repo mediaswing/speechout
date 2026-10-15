@@ -85,10 +85,11 @@ the first time it starts.
 
 ## The window
 
-The window has four tabs across the top: **General**, **Settings**,
-**Wordlists** and **Audio Player**. Every button, box and dropdown sits on its own line and fills the
+The window has five tabs across the top: **General**, **Settings**,
+**Wordlists**, **Audio Player** and **Describe Video**. Every button, box and dropdown sits on its own line and fills the
 width of the window. At the bottom, a progress bar shows how far through
-reading aloud or saving audio you are, and a status line below it reports what
+reading aloud or saving audio you are (on the Describe Video tab it is under
+the preview instead), and a status line below it reports what
 is happening and any errors. Screen readers announce the status line
 automatically.
 
@@ -173,6 +174,32 @@ GitHub. If you say no, the file is transcribed without labels. Labelling works
 best with clear recordings of a few people, such as interviews and meetings.
 It finds it harder when people talk over each other, when voices sound alike,
 or on phone-quality audio. Choosing the number of people helps.
+
+### Describe Video
+
+| Control | What it does |
+| --- | --- |
+| Current file | Shows the video you chose. |
+| Choose a video… | Opens an MP4, M4V, MOV, MKV, WebM, AVI, WMV, MPEG or 3GP video and describes it. |
+| Preview | The picture being described. Screen readers read which picture it is and when it comes in the video. |
+| Progress bar | How far through describing the video the app is. |
+| Read aloud / Stop | Reads the description aloud. While the video is being described, Stop stops describing. |
+| Description of the video | Each picture's description, starting with when it comes, such as "At 1 minute 5 seconds:". You can review it with a screen reader. |
+| Save spoken text as audio… / Copy the description to the clipboard | Takes the description elsewhere. |
+
+The app uses ffmpeg to take the keyframes out of the video. These are the
+whole pictures a video is built from; the frames between them only record
+what changed. Pictures closer together than 5 seconds are skipped, and at
+most 40 are described, spread across the whole video, so a long video has
+them further apart. Each picture is then described by the local AI model,
+just as a photo is. This can take a minute a picture on a laptop. The sound
+isn't described or transcribed.
+
+If ffmpeg isn't installed, the app offers to install it with winget on
+Windows, Homebrew on a Mac, or APT or DNF on Linux (you will be asked for your
+password), or to open the ffmpeg download page. If Ollama isn't installed or
+running, or has no model that understands pictures, the app offers to set it
+up, as it does for photos.
 
 ### Settings
 
@@ -277,14 +304,14 @@ you choose whether to use them.
 
 | Windows and Linux | Mac | Action |
 | --- | --- | --- |
-| Ctrl+O | Cmd+O | Choose a file (an audio file on the Audio Player tab) |
-| Ctrl+S | Cmd+S | Save the spoken text as audio (save the transcript on the Audio Player tab) |
-| Ctrl+1 to Ctrl+4 | Cmd+1 to Cmd+4 | Go to the General, Settings, Wordlists or Audio Player tab |
+| Ctrl+O | Cmd+O | Choose a file (an audio file on the Audio Player tab, a video on the Describe Video tab) |
+| Ctrl+S | Cmd+S | Save the spoken text as audio (save the transcript on the Audio Player tab, the video's description on the Describe Video tab) |
+| Ctrl+1 to Ctrl+5 | Cmd+1 to Cmd+5 | Go to the General, Settings, Wordlists, Audio Player or Describe Video tab |
 | Ctrl+Tab / Ctrl+Shift+Tab | Ctrl+Tab / Ctrl+Shift+Tab | Next or previous tab |
-| F5 | F5 or Cmd+R | Read aloud (play the audio file on the Audio Player tab) |
+| F5 | F5 or Cmd+R | Read aloud (play the audio file on the Audio Player tab, read the video's description on the Describe Video tab) |
 | F6 | F6 | Pause or resume. While an audio file is playing, pauses or resumes it |
 | F7 | F7 | Hear how far through reading or saving you are. While an audio file is playing, hear the time, such as "1 minute 5 seconds of 3 minutes" |
-| Escape | Escape or Cmd+. | Stop reading, cancel saving, stop a download or stop transcribing. While an audio file is playing or being opened, stops it |
+| Escape | Escape or Cmd+. | Stop reading, cancel saving, stop a download, stop transcribing or stop describing a video. While an audio file is playing or being opened, stops it |
 | F1 | F1 | List the keyboard shortcuts |
 
 On most Mac keyboards, F1 to F12 control the computer unless you hold Fn, so
@@ -332,6 +359,9 @@ them, so don't save keys on a shared account.
 - Photos are sent only to Ollama on your own computer (`127.0.0.1:11434`),
   after they have been shrunk, converted to JPEG and had their metadata
   removed.
+- Videos are only opened by ffmpeg on your own computer. Their pictures are
+  sent only to Ollama on your computer, as photos are, and are deleted when
+  the video has been described.
 - Audio files are played and transcribed on your computer, and are never sent
   anywhere. The first time you transcribe, and only if you agree, the Whisper
   model is downloaded from Hugging Face (`huggingface.co`). The first time you
@@ -513,6 +543,7 @@ src/audio.rs          Decoding, playback, WAV and MP3 export, and the speech che
 src/playlist.rs       Zip files of audio played as playlists
 src/document.rs       PDF, TXT, Markdown, DOCX, ODT, CSV, ODS, PPTX and PPT text extraction
 src/vision.rs         Photo descriptions, GPS and place names
+src/video.rs          Taking keyframes out of a video with ffmpeg
 src/transcribe.rs     Speech recognition with Whisper, and downloading its models
 src/speakers.rs       Working out who is speaking, with sherpa-onnx
 src/wordlist.rs       Wordlist parsing and substitution

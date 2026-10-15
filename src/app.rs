@@ -1,4 +1,5 @@
-//! The window: four tabs (General, Settings, Wordlists, Audio Player) with
+//! The window: five tabs (General, Settings, Wordlists, Audio Player,
+//! Describe Video) with
 //! every control on its own full-width line.
 //!
 //! Accessibility notes:
@@ -45,10 +46,11 @@ enum Tab {
     Settings,
     Wordlists,
     Player,
+    Video,
 }
 
 impl Tab {
-    const ALL: [Tab; 4] = [Tab::General, Tab::Settings, Tab::Wordlists, Tab::Player];
+    const ALL: [Tab; 5] = [Tab::General, Tab::Settings, Tab::Wordlists, Tab::Player, Tab::Video];
 
     fn label(self) -> String {
         match self {
@@ -56,6 +58,7 @@ impl Tab {
             Tab::Settings => t("tab.settings"),
             Tab::Wordlists => t("tab.wordlists"),
             Tab::Player => t("tab.player"),
+            Tab::Video => t("tab.video"),
         }
     }
 
@@ -79,6 +82,21 @@ impl Source {
         match self {
             Source::File => t("general.source_file"),
             Source::Paste => t("general.source_paste"),
+        }
+    }
+}
+
+/// A photo or video chosen before the programs that describe it were found
+/// or set up, to describe once they are.
+enum Waiting {
+    Photo(PathBuf),
+    Video(PathBuf),
+}
+
+impl Waiting {
+    fn path(&self) -> &std::path::Path {
+        match self {
+            Waiting::Photo(p) | Waiting::Video(p) => p,
         }
     }
 }
@@ -111,6 +129,8 @@ enum JobKind {
     Translating,
     /// Turning the speech in an audio file into text with Whisper.
     Transcribing,
+    /// Taking the pictures out of a video and describing them.
+    DescribingVideo,
 }
 
 pub struct SpeechApp {
@@ -133,11 +153,24 @@ pub struct SpeechApp {
     pasted: String,
     pasted_text: String,
     loading_file: bool,
-    /// A photo chosen before a local AI model was found, to describe once
-    /// the check for Ollama finishes.
-    waiting_photo: Option<PathBuf>,
-    /// Ollama is being installed or started for a waiting photo.
+    /// A photo or video chosen before a local AI model was found, to
+    /// describe once the check for Ollama finishes.
+    waiting: Option<Waiting>,
+    /// Ollama is being installed or started for a waiting photo or video.
     setting_up_ollama: bool,
+    /// ffmpeg is being installed for a waiting video.
+    setting_up_ffmpeg: bool,
+    /// The video on the Describe Video tab.
+    video: Option<PathBuf>,
+    /// Where the pictures taken from the video are kept while it is
+    /// described. Deleted when dropped.
+    video_frames: Option<tempfile::TempDir>,
+    /// The picture being described, and what screen readers call it.
+    video_preview: Option<(egui::TextureHandle, String)>,
+    /// A picture that arrived since the last frame, to make into a texture.
+    pending_preview: Option<(egui::ColorImage, String)>,
+    /// The description of the video.
+    video_text: String,
     /// The window has been checked against the screen size.
     fitted_to_screen: bool,
     job: Option<(JobKind, Arc<Control>)>,
@@ -235,8 +268,14 @@ impl SpeechApp {
             pasted: String::new(),
             pasted_text: String::new(),
             loading_file: false,
-            waiting_photo: None,
+            waiting: None,
             setting_up_ollama: false,
+            setting_up_ffmpeg: false,
+            video: None,
+            video_frames: None,
+            video_preview: None,
+            pending_preview: None,
+            video_text: String::new(),
             fitted_to_screen: false,
             job: None,
             paused: false,
@@ -326,7 +365,9 @@ impl SpeechApp {
             Some((JobKind::Downloading, _)) => "progress.downloading",
             Some((JobKind::Translating, _)) => "progress.translating",
             Some((JobKind::Transcribing, _)) => "progress.transcribing",
+            Some((JobKind::DescribingVideo, _)) => "progress.describing_video",
             None if self.setting_up_ollama => "progress.setting_up",
+            None if self.setting_up_ffmpeg => "progress.setting_up_ffmpeg",
             None if self.loading_file || self.audio_loader.is_some() => "progress.opening",
             None => "progress.nothing",
         };
@@ -334,8 +375,12 @@ impl SpeechApp {
         self.announce(msg);
     }
 
-    /// The text that will be read aloud: from the file, or from the text box.
+    /// The text that will be read aloud: the video's description on the
+    /// Describe Video tab, otherwise the file's or the text box's.
     fn current_text(&self) -> &str {
+        if self.tab == Tab::Video {
+            return &self.video_text;
+        }
         match self.source {
             Source::File => &self.text,
             Source::Paste => &self.pasted_text,
@@ -371,7 +416,7 @@ impl SpeechApp {
     /// Whether the loaded file, such as a PNG screenshot, must be read with
     /// the system voices.
     fn system_voices_only(&self) -> bool {
-        self.source == Source::File && self.file_system_voices_only
+        self.tab != Tab::Video && self.source == Source::File && self.file_system_voices_only
     }
 
     fn ensure_voices(&mut self, provider: Provider) {
@@ -463,7 +508,7 @@ impl SpeechApp {
                     );
                 }
                 Msg::Models(result) => {
-                    let waiting = self.waiting_photo.is_some();
+                    let waiting = self.waiting.is_some();
                     match &result {
                         // A waiting photo leads to an offer to download a model instead.
                         Ok(models) if models.is_empty() && !waiting => self.announce(t("models.none")),
@@ -486,14 +531,16 @@ impl SpeechApp {
                             }
                         }
                     }
-                    if let Some(path) = self.waiting_photo.take() {
-                        self.loading_file = false;
+                    if let Some(waiting) = self.waiting.take() {
+                        if matches!(waiting, Waiting::Photo(_)) {
+                            self.loading_file = false;
+                        }
                         match &result {
-                            Err(_) => self.offer_ollama(path),
+                            Err(_) => self.offer_ollama(waiting),
                             Ok(models) if !crate::vision::has_vision_model(models) => {
-                                self.offer_model_download(Some(path));
+                                self.offer_model_download(Some(waiting));
                             }
-                            Ok(_) => self.open_file(path, true),
+                            Ok(_) => self.resume(waiting),
                         }
                     }
                     self.models = Some(match result {
@@ -503,15 +550,15 @@ impl SpeechApp {
                 }
                 Msg::ModelDownloaded(model, result) => {
                     self.job = None;
-                    let photo = self.waiting_photo.take();
+                    let waiting = self.waiting.take();
                     match result {
                         Ok(true) => {
                             self.settings.vision_model = model.clone();
                             self.settings.save();
                             self.models = None;
                             self.ensure_models();
-                            match photo {
-                                Some(path) => self.open_file(path, true),
+                            match waiting {
+                                Some(waiting) => self.resume(waiting),
                                 None => {
                                     self.announce(tf("model.downloaded", &[("model", &model)]));
                                     self.cue(Cue::Success);
@@ -532,8 +579,9 @@ impl SpeechApp {
                             self.ensure_models();
                         }
                         Err(e) => {
-                            self.loading_file = false;
-                            self.waiting_photo = None;
+                            if matches!(self.waiting.take(), Some(Waiting::Photo(_))) {
+                                self.loading_file = false;
+                            }
                             self.show_error(tf("ollama.setup_failed", &[("error", &e)]));
                         }
                     }
@@ -624,6 +672,34 @@ impl SpeechApp {
                     }
                 }
                 Msg::Transcribed(path, result) => self.transcribed(path, result),
+                Msg::FfmpegReady(result) => {
+                    self.setting_up_ffmpeg = false;
+                    let waiting = self.waiting.take();
+                    match result {
+                        Ok(_) => match waiting {
+                            Some(Waiting::Video(path)) => self.describe_video(path, t("ffmpeg.installed")),
+                            _ => self.announce(t("ffmpeg.installed")),
+                        },
+                        Err(e) => self.show_error(tf("ffmpeg.setup_failed", &[("error", &e)])),
+                    }
+                }
+                Msg::VideoFrame(frame) => {
+                    // Only the video still chosen; one left behind was told to stop.
+                    if self.video.as_ref() == Some(&frame.video)
+                        && let Some(image) = frame.image
+                    {
+                        let label = tf(
+                            "video.preview",
+                            &[
+                                ("number", &frame.number),
+                                ("count", &frame.count),
+                                ("time", &spoken_duration(frame.time)),
+                            ],
+                        );
+                        self.pending_preview = Some((image, label));
+                    }
+                }
+                Msg::VideoDescribed(path, result) => self.video_described(path, result),
                 Msg::Update(result, requested) => self.update_checked(result, requested),
                 Msg::Status(s) => self.announce(s),
                 Msg::Progress(p) => self.progress = p.clamp(0.0, 1.0),
@@ -696,7 +772,7 @@ impl SpeechApp {
     }
 
     fn choose_file(&mut self) {
-        if self.loading_file {
+        if self.loading_file || self.preparing_video() {
             return;
         }
         let Some(path) = rfd::FileDialog::new()
@@ -717,34 +793,56 @@ impl SpeechApp {
             self.announce(t("file.model_downloading"));
             return;
         }
-        // Check Ollama first when no model is chosen, when Ollama was not
-        // running at the last check, or when it has no model for photos, so
-        // the user is offered a fix instead of a failed description.
-        let needs_check = self.settings.vision_model.is_empty()
-            || match &self.models {
-                Some(Loadable::Failed) => true,
-                Some(Loadable::Ready(m)) => !crate::vision::has_vision_model(m),
-                _ => false,
-            };
-        if is_image && needs_check {
-            // Look for Ollama again, in case it has been installed or started
-            // since the last check, and carry on when the answer arrives.
-            if !matches!(self.models, Some(Loadable::Loading)) {
-                self.models = None;
-            }
-            self.ensure_models();
-            self.loading_file = true;
-            self.announce(tf("file.looking_for_model", &[("name", &file_name(&path))]));
-            self.waiting_photo = Some(path);
+        if is_image && self.needs_model_check() {
+            self.wait_for_model(Waiting::Photo(path));
             return;
         }
         self.open_file(path, is_image);
     }
 
-    /// Ollama could not be reached when a photo was chosen. Offers to start
-    /// it, install it with the package manager, or open its download page.
-    fn offer_ollama(&mut self, path: PathBuf) {
-        let name = file_name(&path);
+    /// A video is waiting for Ollama to be checked or set up, or for ffmpeg
+    /// to be installed.
+    fn preparing_video(&self) -> bool {
+        self.setting_up_ffmpeg || matches!(self.waiting, Some(Waiting::Video(_)))
+    }
+
+    /// Ollama should be checked first: no model is chosen, Ollama was not
+    /// running at the last check, or it has no model for photos. Then the
+    /// user is offered a fix instead of a failed description.
+    fn needs_model_check(&self) -> bool {
+        self.settings.vision_model.is_empty()
+            || match &self.models {
+                Some(Loadable::Failed) => true,
+                Some(Loadable::Ready(m)) => !crate::vision::has_vision_model(m),
+                _ => false,
+            }
+    }
+
+    /// Looks for Ollama again, in case it has been installed or started
+    /// since the last check, and describes `waiting` when the answer arrives.
+    fn wait_for_model(&mut self, waiting: Waiting) {
+        if !matches!(self.models, Some(Loadable::Loading)) {
+            self.models = None;
+        }
+        self.ensure_models();
+        self.loading_file = matches!(waiting, Waiting::Photo(_));
+        self.announce(tf("file.looking_for_model", &[("name", &file_name(waiting.path()))]));
+        self.waiting = Some(waiting);
+    }
+
+    /// Carries on describing a photo or video once Ollama has a model.
+    fn resume(&mut self, waiting: Waiting) {
+        match waiting {
+            Waiting::Photo(path) => self.open_file(path, true),
+            Waiting::Video(path) => self.describe_video(path, String::new()),
+        }
+    }
+
+    /// Ollama could not be reached when a photo or video was chosen. Offers
+    /// to start it, install it with the package manager, or open its
+    /// download page.
+    fn offer_ollama(&mut self, waiting: Waiting) {
+        let name = file_name(waiting.path());
         let installed = crate::platform::ollama_installed();
         let manager = crate::platform::package_manager();
         let intro = t("ollama.intro");
@@ -780,8 +878,8 @@ impl SpeechApp {
             return;
         }
         self.setting_up_ollama = true;
-        self.loading_file = true;
-        self.waiting_photo = Some(path);
+        self.loading_file = matches!(waiting, Waiting::Photo(_));
+        self.waiting = Some(waiting);
         self.announce(match manager {
             Some(manager) if !installed => tf("ollama.installing", &[("manager", &manager)]),
             _ => t("ollama.starting"),
@@ -790,8 +888,8 @@ impl SpeechApp {
     }
 
     /// Ollama has no model that understands images. Asks whether to download
-    /// one, then describes `photo` if one is waiting.
-    fn offer_model_download(&mut self, photo: Option<PathBuf>) {
+    /// one, then describes the photo or video that is waiting, if any.
+    fn offer_model_download(&mut self, waiting: Option<Waiting>) {
         let model = crate::vision::SUGGESTED_MODEL;
         let yes = rfd::MessageDialog::new()
             .set_title(t("model.download_title"))
@@ -807,7 +905,7 @@ impl SpeechApp {
         let control = Arc::new(Control::default());
         self.job = Some((JobKind::Downloading, control.clone()));
         self.progress = 0.0;
-        self.waiting_photo = photo;
+        self.waiting = waiting;
         self.announce(tf("model.downloading", &[("model", &model), ("size", &model_size())]));
         self.rep.spawn(move |rep| worker::download_model(rep, control, model.to_owned()));
     }
@@ -846,6 +944,7 @@ impl SpeechApp {
         }
         if self.current_text().trim().is_empty() {
             let msg = match self.source {
+                _ if self.tab == Tab::Video => t("video.nothing"),
                 Source::File => t("read.nothing"),
                 Source::Paste => t("read.nothing_pasted"),
             };
@@ -955,7 +1054,12 @@ impl SpeechApp {
             return;
         }
         let format = self.settings.audio_format;
-        let file = if self.source == Source::File { self.file.as_ref() } else { None };
+        let on_video = self.tab == Tab::Video;
+        let file = match self.source {
+            _ if on_video => self.video.as_ref(),
+            Source::File => self.file.as_ref(),
+            Source::Paste => None,
+        };
         let stem = file
             .and_then(|f| f.file_stem())
             .map(|s| s.to_string_lossy().into_owned())
@@ -972,9 +1076,10 @@ impl SpeechApp {
             path.as_mut_os_string().push(format!(".{}", format.extension()));
         }
         let Some(mut job) = self.build_job() else { return };
-        // A saved photo description ends by saying how it was made, since
-        // the listener cannot tell from the audio alone.
-        let is_image = self.source == Source::File
+        // A saved photo or video description ends by saying how it was
+        // made, since the listener cannot tell from the audio alone.
+        let is_image = !on_video
+            && self.source == Source::File
             && self
                 .file
                 .as_deref()
@@ -982,6 +1087,8 @@ impl SpeechApp {
                 .is_some_and(|k| k == crate::document::FileKind::Image);
         if is_image {
             job.text = format!("{}\n\n{}", job.text.trim_end(), job.provider.image_description_note());
+        } else if on_video {
+            job.text = format!("{}\n\n{}", job.text.trim_end(), job.provider.video_description_note());
         }
         let control = Arc::new(Control::default());
         self.job = Some((JobKind::Saving, control.clone()));
@@ -1671,6 +1778,110 @@ impl SpeechApp {
         }
     }
 
+    // ----- describe video -----------------------------------------------
+
+    fn choose_video(&mut self) {
+        if self.is_busy() || self.waiting.is_some() || self.setting_up_ffmpeg {
+            return;
+        }
+        let Some(path) = rfd::FileDialog::new()
+            .set_title(t("video.dialog_title"))
+            .add_filter(t("video.filter"), &crate::video::EXTENSIONS)
+            .pick_file()
+        else {
+            return;
+        };
+        self.video = Some(path.clone());
+        self.video_text.clear();
+        self.video_preview = None;
+        self.pending_preview = None;
+        self.describe_video(path, String::new());
+    }
+
+    /// Describes the video's keyframes, first offering to install ffmpeg or
+    /// to set up Ollama if they are missing. `intro` is said first.
+    fn describe_video(&mut self, path: PathBuf, intro: String) {
+        if self.is_busy() {
+            return self.announce(format!("{intro} {}", t("video.busy")).trim().to_owned());
+        }
+        let Some(ffmpeg) = crate::platform::ffmpeg() else {
+            if !intro.is_empty() {
+                self.announce(intro);
+            }
+            return self.offer_ffmpeg(path);
+        };
+        if self.needs_model_check() {
+            return self.wait_for_model(Waiting::Video(path));
+        }
+        let frames = match tempfile::Builder::new().prefix("speechout-video-").tempdir() {
+            Ok(dir) => dir,
+            Err(e) => return self.show_error(tf("video.failed", &[("error", &e)])),
+        };
+        let dir = frames.path().to_owned();
+        self.video_frames = Some(frames);
+        let control = Arc::new(Control::default());
+        self.job = Some((JobKind::DescribingVideo, control.clone()));
+        self.progress = 0.0;
+        let model = self.settings.vision_model.clone();
+        let started = tf("video.started", &[("name", &file_name(&path)), ("model", &model)]);
+        self.announce(format!("{intro} {started}").trim().to_owned());
+        self.rep.spawn(move |rep| worker::describe_video(rep, control, ffmpeg, path, dir, model));
+    }
+
+    /// ffmpeg isn't installed. Offers to install it with the package
+    /// manager, or to open its download page, then describes the video.
+    fn offer_ffmpeg(&mut self, path: PathBuf) {
+        let manager = crate::platform::ffmpeg_package_manager();
+        let mut question = match manager {
+            Some(manager) => tf("ffmpeg.install_question", &[("manager", &manager)]),
+            None => t("ffmpeg.download_question"),
+        };
+        if manager.is_some() && cfg!(target_os = "linux") {
+            question = format!("{question} {}", t("ollama.password"));
+        }
+        let yes = rfd::MessageDialog::new()
+            .set_title(t("ffmpeg.install_title"))
+            .set_description(format!("{}\n\n{question}", t("ffmpeg.intro")))
+            .set_buttons(rfd::MessageButtons::YesNo)
+            .set_level(rfd::MessageLevel::Info)
+            .show()
+            == rfd::MessageDialogResult::Yes;
+        if !yes {
+            self.announce(tf("ffmpeg.declined", &[("name", &file_name(&path))]));
+            return;
+        }
+        let Some(manager) = manager else {
+            const DOWNLOAD_PAGE: &str = "https://ffmpeg.org/download.html";
+            match crate::platform::open_url(DOWNLOAD_PAGE) {
+                Ok(()) => self.announce(t("ffmpeg.page_opened")),
+                Err(e) => self.show_error(tf("ffmpeg.page_failed", &[("error", &e), ("url", &DOWNLOAD_PAGE)])),
+            }
+            return;
+        };
+        self.setting_up_ffmpeg = true;
+        self.waiting = Some(Waiting::Video(path));
+        self.announce(tf("ffmpeg.installing", &[("manager", &manager)]));
+        self.rep.spawn(worker::install_ffmpeg);
+    }
+
+    fn video_described(&mut self, path: PathBuf, result: Result<Option<worker::VideoDescription>, String>) {
+        self.job = None;
+        // The pictures have been described, and the preview has its own copy.
+        self.video_frames = None;
+        let name = file_name(&path);
+        match result {
+            Ok(None) => self.announce(t("video.stopped")),
+            Ok(Some(done)) => {
+                let words = done.text.split_whitespace().count();
+                self.video_text = done.text;
+                let key = if done.frames == 1 { "video.done_one" } else { "video.done" };
+                self.announce(tf(key, &[("name", &name), ("count", &done.frames), ("words", &words)]));
+                self.cue(Cue::Success);
+            }
+            Err(e) => self.show_error(tf("video.failed", &[("error", &e)])),
+        }
+    }
+
     // ----- keyboard -----------------------------------------------------
 
     /// Something can be stopped: reading, saving, a download, a translation,
@@ -1724,9 +1935,11 @@ impl SpeechApp {
         let count = Tab::ALL.len();
         let current = Tab::ALL.iter().position(|t| *t == self.tab).unwrap_or(0);
         match action {
-            Action::Open => {
-                if on_player { self.choose_audio() } else { self.choose_file() }
-            }
+            Action::Open => match self.tab {
+                Tab::Player => self.choose_audio(),
+                Tab::Video => self.choose_video(),
+                _ => self.choose_file(),
+            },
             Action::Save => {
                 if on_player { self.save_transcript() } else { self.save_audio() }
             }
@@ -1833,7 +2046,7 @@ impl SpeechApp {
                 text_field(ui, &t("general.current_file"), &mut file_text, false);
 
                 let label = self.keyed("general.choose_file", Action::Open);
-                if full_button(ui, &label, !self.loading_file).clicked() {
+                if full_button(ui, &label, !self.loading_file && !self.preparing_video()).clicked() {
                     self.choose_file();
                 }
 
@@ -1933,6 +2146,7 @@ impl SpeechApp {
             Some((JobKind::Downloading, _)) => self.keyed("general.stop_downloading", Action::Stop),
             Some((JobKind::Translating, _)) => self.keyed("general.stop_translating", Action::Stop),
             Some((JobKind::Transcribing, _)) => self.stop_transcribing_label(),
+            Some((JobKind::DescribingVideo, _)) => self.keyed("video.stop", Action::Stop),
             _ => self.keyed("general.stop", Action::Stop),
         };
         if full_button(ui, &stop_label, self.is_busy()).clicked() {
@@ -2369,6 +2583,49 @@ impl SpeechApp {
         }
     }
 
+    /// The file picker, with the picture being described under it and the
+    /// progress bar under that, then the description.
+    fn video_tab(&mut self, ui: &mut Ui) {
+        heading(ui, &t("video.heading"));
+        let describing = matches!(self.job, Some((JobKind::DescribingVideo, _)));
+
+        let mut file_text = match &self.video {
+            Some(p) => p.display().to_string(),
+            None => t("general.no_file"),
+        };
+        text_field(ui, &t("general.current_file"), &mut file_text, false);
+        let label = self.keyed("video.choose", Action::Open);
+        let can_choose = !self.is_busy() && self.waiting.is_none() && !self.setting_up_ffmpeg;
+        if full_button(ui, &label, can_choose).clicked() {
+            self.choose_video();
+        }
+
+        let none = if describing { t("video.preview_waiting") } else { t("video.preview_none") };
+        video_preview(ui, self.video_preview.as_ref(), &none);
+        self.progress_bar(ui);
+
+        let has_text = !self.video_text.is_empty();
+        if full_button(ui, &self.keyed("general.read_aloud", Action::Read), has_text && !self.is_busy()).clicked() {
+            self.read_aloud();
+        }
+        let stop_label = match self.job {
+            Some((JobKind::DescribingVideo, _)) => self.keyed("video.stop", Action::Stop),
+            _ => self.keyed("general.stop", Action::Stop),
+        };
+        if full_button(ui, &stop_label, self.is_busy()).clicked() {
+            self.stop();
+        }
+        let text = if has_text { self.video_text.clone() } else { t("video.none") };
+        text_area(ui, &t("video.label"), &text);
+        if full_button(ui, &self.keyed("general.save", Action::Save), has_text && !self.is_busy()).clicked() {
+            self.save_audio();
+        }
+        if full_button(ui, &t("video.copy"), has_text).clicked() {
+            let ctx = ui.ctx().clone();
+            self.copy_text(&ctx);
+        }
+    }
+
     /// While the audio file plays, Escape stops it rather than transcribing,
     /// so the button doesn't offer Escape then.
     fn stop_transcribing_label(&self) -> String {
@@ -2397,7 +2654,9 @@ impl SpeechApp {
             Some((JobKind::Downloading, _)) => (Some(self.progress), "bar.downloading"),
             Some((JobKind::Translating, _)) => (Some(self.progress), "bar.translating"),
             Some((JobKind::Transcribing, _)) => (Some(self.progress), "bar.transcribing"),
+            Some((JobKind::DescribingVideo, _)) => (Some(self.progress), "bar.describing_video"),
             None if self.setting_up_ollama => (None, "bar.setting_up"),
+            None if self.setting_up_ffmpeg => (None, "bar.setting_up_ffmpeg"),
             None if self.loading_file || self.audio_loader.is_some() => (None, "bar.opening"),
             None if self.audio_player.is_some() => {
                 let key = if self.audio_paused { "bar.audio_paused" } else { "bar.audio_playing" };
@@ -2459,10 +2718,17 @@ impl eframe::App for SpeechApp {
             self.tab_bar(ui);
             ui.add_space(4.0);
         });
+        if let Some((image, label)) = self.pending_preview.take() {
+            let texture = ctx.load_texture("video_preview", image, egui::TextureOptions::LINEAR);
+            self.video_preview = Some((texture, label));
+        }
         egui::Panel::bottom("status").show(ui, |ui| {
             ui.add_space(6.0);
-            self.progress_bar(ui);
-            ui.add_space(4.0);
+            // The Describe Video tab has the progress bar under its preview.
+            if self.tab != Tab::Video {
+                self.progress_bar(ui);
+                ui.add_space(4.0);
+            }
             self.status_bar(ui);
             ui.add_space(4.0);
         });
@@ -2474,6 +2740,7 @@ impl eframe::App for SpeechApp {
                     Tab::Settings => self.settings_tab(ui),
                     Tab::Wordlists => self.wordlists_tab(ui),
                     Tab::Player => self.player_tab(ui),
+                    Tab::Video => self.video_tab(ui),
                 }
             });
         });
@@ -2618,6 +2885,36 @@ fn waveform(ui: &mut Ui, peaks: &[f32], played: f32, description: &str) {
     ui.ctx().accesskit_node_builder(resp.id, |node| {
         node.set_role(Role::Image);
         node.set_label(description);
+    });
+}
+
+/// The picture from a video being described, as large as fits the width in
+/// a 16:9 frame, or `none` written in the frame while there isn't one.
+/// Screen readers get it as an image named after the picture.
+fn video_preview(ui: &mut Ui, preview: Option<&(egui::TextureHandle, String)>, none: &str) {
+    let width = ui.available_width();
+    let (rect, resp) = ui.allocate_exact_size(egui::vec2(width, (width * 9.0 / 16.0).min(360.0)), egui::Sense::hover());
+    let visuals = ui.visuals();
+    let painter = ui.painter_at(rect);
+    painter.rect_filled(rect, 4.0, visuals.extreme_bg_color);
+    let label = match preview {
+        Some((texture, label)) => {
+            let size = texture.size_vec2();
+            let scale = (rect.width() / size.x).min(rect.height() / size.y);
+            let shown = egui::Rect::from_center_size(rect.center(), size * scale);
+            let uv = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0));
+            painter.image(texture.id(), shown, uv, Color32::WHITE);
+            label.as_str()
+        }
+        None => {
+            let font = egui::TextStyle::Body.resolve(ui.style());
+            painter.text(rect.center(), egui::Align2::CENTER_CENTER, none, font, visuals.weak_text_color());
+            none
+        }
+    };
+    ui.ctx().accesskit_node_builder(resp.id, |node| {
+        node.set_role(Role::Image);
+        node.set_label(label);
     });
 }
 

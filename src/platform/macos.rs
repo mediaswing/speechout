@@ -199,6 +199,34 @@ pub fn start_ollama() -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Where Homebrew (Apple silicon, then Intel) and MacPorts put ffmpeg. Apps
+/// opened from the Finder don't get the PATH a terminal has.
+const FFMPEG: [&str; 3] = ["/opt/homebrew/bin/ffmpeg", "/usr/local/bin/ffmpeg", "/opt/local/bin/ffmpeg"];
+
+pub fn ffmpeg() -> Option<std::path::PathBuf> {
+    FFMPEG.into_iter().map(std::path::PathBuf::from).find(|p| p.is_file())
+}
+
+pub fn ffmpeg_package_manager() -> Option<&'static str> {
+    package_manager()
+}
+
+/// Installs ffmpeg with Homebrew.
+pub fn install_ffmpeg() -> anyhow::Result<()> {
+    let brew = brew().context("Homebrew is not installed")?;
+    let output = Command::new(brew)
+        .args(["install", "ffmpeg"])
+        .env("HOMEBREW_NO_ENV_HINTS", "1")
+        .stdin(Stdio::null())
+        .output()
+        .context("could not run Homebrew")?;
+    if !output.status.success() {
+        log::warn!("brew failed ({}): {}", output.status, String::from_utf8_lossy(&output.stderr).trim());
+        bail!("Homebrew could not install ffmpeg");
+    }
+    Ok(())
+}
+
 pub fn secret_get(_name: &str) -> SecretStore<Option<String>> {
     SecretStore::Unsupported
 }

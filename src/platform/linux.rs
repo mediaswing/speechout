@@ -185,6 +185,46 @@ pub fn start_ollama() -> anyhow::Result<()> {
     Ok(())
 }
 
+pub fn ffmpeg() -> Option<PathBuf> {
+    find_program(&["ffmpeg"])
+}
+
+/// The distribution's own package manager, run through pkexec, which asks
+/// for the administrator password in a desktop dialog: the program, its
+/// name, and the arguments that install ffmpeg. Fedora's package is
+/// ffmpeg-free, the build without patented codecs it is allowed to ship.
+fn ffmpeg_installer() -> Option<(PathBuf, &'static str, &'static [&'static str])> {
+    find_program(&["pkexec"])?;
+    if let Some(apt) = find_program(&["apt-get"]) {
+        return Some((apt, "APT", &["install", "-y", "ffmpeg"][..]));
+    }
+    find_program(&["dnf"]).map(|dnf| (dnf, "DNF", &["install", "-y", "ffmpeg-free"][..]))
+}
+
+pub fn ffmpeg_package_manager() -> Option<&'static str> {
+    ffmpeg_installer().map(|(_, name, _)| name)
+}
+
+pub fn install_ffmpeg() -> anyhow::Result<()> {
+    let (program, name, args) = ffmpeg_installer().context("no package manager was found")?;
+    let pkexec = find_program(&["pkexec"]).context("pkexec is not installed")?;
+    let output = Command::new(pkexec)
+        .arg(program)
+        .args(args)
+        .stdin(Stdio::null())
+        .output()
+        .with_context(|| format!("could not run {name}"))?;
+    match output.status.code() {
+        Some(0) => Ok(()),
+        // pkexec: the password dialog was dismissed or refused.
+        Some(126 | 127) => bail!("the administrator password was not given"),
+        _ => {
+            log::warn!("{name} failed ({}): {}", output.status, String::from_utf8_lossy(&output.stderr).trim());
+            bail!("{name} could not install ffmpeg")
+        }
+    }
+}
+
 pub fn secret_get(_name: &str) -> SecretStore<Option<String>> {
     SecretStore::Unsupported
 }

@@ -264,7 +264,7 @@ fn function_key_number(key: Key) -> Option<u8> {
     name.strip_prefix('F').and_then(|n| n.parse().ok())
 }
 
-/// The digit on a key, for Ctrl+1 to Ctrl+4.
+/// The digit on a key, for Ctrl+1 to Ctrl+5.
 fn digit(key: Key) -> Option<usize> {
     let name = key.name();
     (name.len() == 1).then(|| name.parse().ok()).flatten()
@@ -478,12 +478,12 @@ impl Keymap {
         self.bindings.iter().find(|(a, b)| *a != except && *b == Some(shortcut)).map(|(a, _)| *a)
     }
 
-    /// How a shortcut for `action` is shown, such as "Ctrl+1 to Ctrl+4"
+    /// How a shortcut for `action` is shown, such as "Ctrl+1 to Ctrl+5"
     /// for going to a tab.
     pub fn describe(&self, action: Action, shortcut: Shortcut) -> String {
         let p = self.platform;
         if action == Action::GoToTab {
-            let last = Shortcut { key: Key::Num4, ..shortcut };
+            let last = Shortcut { key: Key::Num5, ..shortcut };
             return format!("{} – {}", shortcut.short(p), last.short(p));
         }
         shortcut.short(p)
@@ -926,7 +926,7 @@ mod tests {
         assert_eq!(Shortcut::ctrl(Key::Tab, true, m).short(m), "Ctrl+Shift+Tab");
         assert_eq!(Shortcut::command(Key::Period).spoken(m), "Command+Full stop");
         let map = keymap(w);
-        assert_eq!(map.describe(Action::GoToTab, Shortcut::command(Key::Num1)), "Ctrl+1 – Ctrl+4");
+        assert_eq!(map.describe(Action::GoToTab, Shortcut::command(Key::Num1)), "Ctrl+1 – Ctrl+5");
     }
 
     #[test]

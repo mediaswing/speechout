@@ -4,6 +4,15 @@ All notable changes to the Speech Output Engine are listed here.
 
 ## [Unreleased]
 
+### Added
+
+- A Describe Video tab. ffmpeg takes the keyframes out of a video, and each
+  is described by the local AI model as a photo is, starting with when it
+  comes in the video. The picture being described is shown under the file
+  picker, with the progress bar under it. The description can be read aloud,
+  saved as audio or copied. If ffmpeg isn't installed, the app offers to
+  install it with winget, Homebrew, APT or DNF, or to open its download page.
+
 ## [3.0.0] - 2026-10-15
 
 ### Changed

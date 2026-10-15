@@ -131,6 +131,20 @@ impl Provider {
         }
     }
 
+    /// Ends a saved video description, as `image_description_note` does a
+    /// photo's.
+    pub fn video_description_note(self) -> String {
+        match self {
+            Provider::System => {
+                "This video description was generated locally and voiced using a local voice.".to_owned()
+            }
+            _ => format!(
+                "This video description was generated locally and voiced using a cloud voice from {}.",
+                self.short_name()
+            ),
+        }
+    }
+
     /// The service's name as used in a sentence.
     pub fn short_name(self) -> &'static str {
         match self {
@@ -413,6 +427,10 @@ mod tests {
         assert_eq!(
             Provider::ElevenLabs.image_description_note(),
             "This image description was generated locally and voiced using a cloud voice from ElevenLabs."
+        );
+        assert_eq!(
+            Provider::OpenAi.video_description_note(),
+            "This video description was generated locally and voiced using a cloud voice from OpenAI."
         );
     }
 }

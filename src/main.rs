@@ -20,6 +20,7 @@ mod speech;
 mod spoken;
 mod transcribe;
 mod update;
+mod video;
 mod vision;
 mod wordlist;
 mod worker;

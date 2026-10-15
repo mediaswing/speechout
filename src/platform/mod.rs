@@ -9,6 +9,8 @@
 //! * `open_url(url)` – open a web page in the default browser.
 //! * `ollama_installed/package_manager/install_ollama/start_ollama` – find,
 //!   install and start Ollama, which describes photos.
+//! * `ffmpeg/ffmpeg_package_manager/install_ffmpeg` – find and install
+//!   ffmpeg, which takes the pictures out of a video.
 //! * `secret_get/secret_set/secret_delete` – the native secret store, if the
 //!   platform has one that the app uses (the Windows registry). Returning
 //!   `Unsupported` makes the caller fall back to a file in the config folder.
@@ -86,6 +88,22 @@ pub fn install_ollama() -> anyhow::Result<()> {
 /// may be before it is ready to answer.
 pub fn start_ollama() -> anyhow::Result<()> {
     imp::start_ollama()
+}
+
+/// Where ffmpeg, which takes the pictures out of a video, is installed.
+pub fn ffmpeg() -> Option<std::path::PathBuf> {
+    imp::ffmpeg()
+}
+
+/// The name of the package manager that can install ffmpeg here, if any:
+/// winget on Windows, Homebrew on macOS, APT or DNF on Linux.
+pub fn ffmpeg_package_manager() -> Option<&'static str> {
+    imp::ffmpeg_package_manager()
+}
+
+/// Installs ffmpeg with the package manager. Blocks until it has finished.
+pub fn install_ffmpeg() -> anyhow::Result<()> {
+    imp::install_ffmpeg()
 }
 
 pub fn secret_get(name: &str) -> SecretStore<Option<String>> {

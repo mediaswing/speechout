@@ -42,6 +42,12 @@ pub enum Msg {
     SpeakerModelsDownloaded(Result<bool, String>),
     /// Transcribing an audio file finished: `None` if it was stopped.
     Transcribed(PathBuf, Result<Option<Transcript>, String>),
+    /// Installing ffmpeg finished, with where it now is.
+    FfmpegReady(Result<PathBuf, String>),
+    /// A picture from the video being described is about to be described.
+    VideoFrame(VideoFrame),
+    /// Describing a video finished: `None` if it was stopped.
+    VideoDescribed(PathBuf, Result<Option<VideoDescription>, String>),
     /// Result of an update check; `bool` is true when the user asked for it.
     Update(Result<Option<crate::update::Release>, String>, bool),
     /// Progress worth announcing.
@@ -606,6 +612,87 @@ pub fn transcribe(
         Ok(Some(Transcript { text, words, speakers: Some(speakers) }))
     });
     rep.send(Msg::Transcribed(path, result.map_err(err)));
+}
+
+/// Installs ffmpeg with the package manager, and checks it can be found.
+pub fn install_ffmpeg(rep: Reporter) {
+    let result = crate::platform::install_ffmpeg().and_then(|()| {
+        log::info!("installed ffmpeg");
+        crate::platform::ffmpeg().ok_or_else(|| anyhow::anyhow!("ffmpeg was installed but could not be found"))
+    });
+    rep.send(Msg::FfmpegReady(result.map_err(err)));
+}
+
+/// A picture from a video, for the preview.
+pub struct VideoFrame {
+    pub video: PathBuf,
+    /// Counting from 1.
+    pub number: usize,
+    pub count: usize,
+    pub time: Duration,
+    /// `None` if it couldn't be shown.
+    pub image: Option<egui::ColorImage>,
+}
+
+/// What describing a video made.
+pub struct VideoDescription {
+    pub text: String,
+    /// How many pictures were described.
+    pub frames: usize,
+}
+
+/// Share of the progress bar that taking out the pictures takes. Describing
+/// them is far slower.
+const KEYFRAMES_SHARE: f32 = 0.1;
+/// The preview is drawn no larger than this.
+const PREVIEW_EDGE: u32 = 800;
+
+/// Takes the keyframes out of a video into `dir` with ffmpeg, then describes
+/// each with the image description model `model`. Escape stops it, between
+/// pictures once they are being described.
+pub fn describe_video(rep: Reporter, control: Arc<Control>, ffmpeg: PathBuf, video: PathBuf, dir: PathBuf, model: String) {
+    let result = contain(|| {
+        let mut quarters = Quarters::new(&rep, "video.progress");
+        let frames = crate::video::keyframes(
+            &ffmpeg,
+            &video,
+            &dir,
+            |f| quarters.report(&rep, f * KEYFRAMES_SHARE),
+            || control.is_stopped(),
+        )?;
+        let Some(frames) = frames else { return Ok(None) };
+        if frames.is_empty() {
+            anyhow::bail!("no pictures could be taken from this video");
+        }
+        let count = frames.len();
+        rep.send(Msg::Status(if count == 1 { t("video.found_one") } else { tf("video.found", &[("count", &count)]) }));
+        let mut described = Vec::with_capacity(count);
+        for (i, frame) in frames.iter().enumerate() {
+            if control.is_stopped() {
+                return Ok(None);
+            }
+            let image = preview_image(&frame.path)
+                .inspect_err(|e| log::warn!("could not show picture {}: {e:#}", i + 1))
+                .ok();
+            rep.send(Msg::VideoFrame(VideoFrame { video: video.clone(), number: i + 1, count, time: frame.time, image }));
+            let description = crate::vision::describe(&frame.path, &model, false)?;
+            described.push((frame.time, description.text));
+            quarters.report(&rep, KEYFRAMES_SHARE + (i + 1) as f32 / count as f32 * (1.0 - KEYFRAMES_SHARE));
+        }
+        Ok(Some(VideoDescription { text: crate::video::join_descriptions(&described), frames: count }))
+    });
+    rep.send(Msg::VideoDescribed(video, result.map_err(err)));
+}
+
+/// A picture made small enough to draw quickly.
+fn preview_image(path: &std::path::Path) -> anyhow::Result<egui::ColorImage> {
+    let mut img = image::open(path)?;
+    if img.width() > PREVIEW_EDGE || img.height() > PREVIEW_EDGE {
+        img = img.resize(PREVIEW_EDGE, PREVIEW_EDGE, image::imageops::FilterType::Triangle);
+    }
+    let rgba = img.into_rgba8();
+    let size = [rgba.width() as usize, rgba.height() as usize];
+    Ok(egui::ColorImage::from_rgba_unmultiplied(size, rgba.as_raw()))
 }
 
 /// What a translation job made.
