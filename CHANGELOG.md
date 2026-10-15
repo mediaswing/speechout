@@ -4,6 +4,8 @@ All notable changes to the Speech Output Engine are listed here.
 
 ## [Unreleased]
 
+## [3.1.0] - 2026-10-15
+
 ### Added
 
 - A Describe Video tab. ffmpeg takes the keyframes out of a video, and each
