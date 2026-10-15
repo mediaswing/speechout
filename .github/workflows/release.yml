@@ -1,0 +1,440 @@
+# Builds the release downloads when a version tag (for example v0.1.0)
+# is pushed, and publishes them on a GitHub release whose text comes from the
+# matching section of CHANGELOG.md. Each download is first submitted to
+# VirusTotal, and a table of scan links is added to the release notes.
+#
+# Requires the repository secret VT_API_KEY (a VirusTotal API key).
+#
+# Packaging:
+#   * macOS: `speechout --package-macos dist` (src/platform/macos.rs) builds the
+#     .app bundle, signs it ad hoc and wraps it in an installer package (.pkg)
+#     that puts it in /Applications. The macos job tests installing it.
+#   * Linux: `speechout --package-deb dist` (src/platform/linux.rs) writes the .deb,
+#     which the linux job renames to use hyphens instead of underscores.
+#   * Windows: a PowerShell step in the windows job stages the exe with the
+#     sherpa-onnx DLLs (speaker labelling) and the Visual C++ runtime DLLs it
+#     imports. WiX Toolset then builds an MSI installer from those files,
+#     described by src/installer/speechout.wxs, and the job tests installing,
+#     upgrading and uninstalling it. The MSI's version comes from the tag,
+#     so the tag must be three numbers such as v2.5.0.
+
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  # Build whisper.cpp (speech recognition) for the processor features most
+  # computers have (AVX2 on PCs), not for the build machine's own processor,
+  # which may have features that users' computers lack.
+  GGML_NATIVE: "OFF"
+
+jobs:
+  windows:
+    name: Windows (x86_64)
+    runs-on: windows-latest
+    env:
+      # libheif and libde265 are built into speechout.exe (the bundled-heif
+      # feature), so HEIC photos need no Microsoft Store add-ons.
+      VCPKGRS_TRIPLET: x64-windows-static-md
+      VCPKG_DEFAULT_BINARY_CACHE: ${{ github.workspace }}\vcpkg-cache
+    steps:
+      - uses: actions/checkout@v7.0.1
+      # The MSI's version comes from the tag. Windows Installer versions are
+      # three numbers, the first two at most 255 and the third at most 65535,
+      # with nothing after them, so check the tag before the long build.
+      - name: Check the tag can be an MSI version
+        shell: pwsh
+        run: |
+          $version = $env:GITHUB_REF_NAME.TrimStart('v')
+          if ($version -notmatch '^(0|[1-9][0-9]{0,2})\.(0|[1-9][0-9]{0,2})\.(0|[1-9][0-9]{0,4})$' -or
+              [int]$Matches[1] -gt 255 -or [int]$Matches[2] -gt 255 -or [int]$Matches[3] -gt 65535) {
+            Write-Host "::error::The tag $env:GITHUB_REF_NAME can't be used as a Windows Installer version. Use a tag such as v2.5.0: three numbers, the first two at most 255 and the third at most 65535, with no suffix such as -beta."
+            exit 1
+          }
+          Write-Host "MSI version: $version"
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2.9.2
+      - uses: actions/cache@v6.1.0
+        with:
+          path: vcpkg-cache
+          key: vcpkg-libheif-${{ hashFiles('Cargo.lock') }}
+          restore-keys: vcpkg-libheif-
+      # The runner image includes vcpkg.
+      - name: Install libheif with vcpkg
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force $env:VCPKG_DEFAULT_BINARY_CACHE | Out-Null
+          & "$env:VCPKG_INSTALLATION_ROOT\vcpkg.exe" install "libheif[core]:x64-windows-static-md" --disable-metrics
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          "VCPKG_ROOT=$env:VCPKG_INSTALLATION_ROOT" >> $env:GITHUB_ENV
+      - run: cargo test --locked --features bundled-heif
+      - run: cargo build --release --locked --features bundled-heif
+      # Stage the exe with the sherpa-onnx DLLs, which its build copies into
+      # target\release, and the Visual C++ runtime DLLs it uses, so it runs on
+      # PCs without the Visual C++ Redistributable. The runtime list comes
+      # from the exe's own imports; DLLs that are part of Windows are not
+      # copied.
+      - name: Stage the exe with its DLLs
+        shell: pwsh
+        run: |
+          $vs = & "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe" -latest -products * -property installationPath
+          $dumpbin = Get-ChildItem "$vs\VC\Tools\MSVC\*\bin\Hostx64\x64\dumpbin.exe" | Select-Object -Last 1
+          $crt = Get-ChildItem "$vs\VC\Redist\MSVC\*\x64\Microsoft.VC*.CRT" -Directory | Select-Object -Last 1
+          if (-not $dumpbin -or -not $crt) { throw "Visual C++ tools or runtime not found under $vs" }
+          $imports = & $dumpbin.FullName /nologo /dependents target\release\speechout.exe |
+            ForEach-Object { $_.Trim() } | Where-Object { $_ -like '*.dll' }
+          $dlls = $imports | ForEach-Object { Join-Path $crt.FullName $_ } | Where-Object { Test-Path $_ }
+          if (-not $dlls) { throw "No Visual C++ runtime DLLs found in the exe's imports: $($imports -join ', ')" }
+          $sherpa = 'sherpa-onnx-c-api.dll', 'onnxruntime.dll', 'onnxruntime_providers_shared.dll' |
+            ForEach-Object { Join-Path target\release $_ }
+          $missing = $sherpa | Where-Object { -not (Test-Path $_) }
+          if ($missing) { throw "sherpa-onnx DLLs missing from target\release: $($missing -join ', ')" }
+          $version = $env:GITHUB_REF_NAME.TrimStart('v')
+          $folder = "speechout-$version-windows-x86_64"
+          New-Item -ItemType Directory -Force "stage\$folder", dist | Out-Null
+          Copy-Item -Path (@('target\release\speechout.exe') + $sherpa + $dlls) -Destination "stage\$folder"
+          Write-Host "Staged:" (Get-ChildItem "stage\$folder").Name
+      # WiX Toolset builds the MSI. The version is pinned so that every
+      # release is built the same way.
+      - name: Install WiX Toolset
+        shell: pwsh
+        run: |
+          $wix = "$env:RUNNER_TEMP\wix"
+          dotnet tool install wix --version 6.0.2 --tool-path $wix
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & "$wix\wix.exe" extension add -g WixToolset.UI.wixext/6.0.2
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $wix >> $env:GITHUB_PATH
+      # The MSI installs the files staged above.
+      # src\installer\speechout.wxs describes it; the Visual C++ runtime DLLs are
+      # whichever ones the step above copied. wix build also runs the
+      # Windows Installer validation checks (ICEs).
+      - name: Build the MSI
+        shell: pwsh
+        run: |
+          $version = $env:GITHUB_REF_NAME.TrimStart('v')
+          $folder = "speechout-$version-windows-x86_64"
+          $stage = (Resolve-Path "stage\$folder").Path
+          $sherpa = 'sherpa-onnx-c-api.dll', 'onnxruntime.dll', 'onnxruntime_providers_shared.dll'
+          $runtime = (Get-ChildItem $stage -Filter *.dll | Where-Object { $_.Name -notin $sherpa }).Name
+          wix build src\installer\speechout.wxs -arch x64 -culture en-US -ext WixToolset.UI.wixext -pdbtype none `
+            -d "Version=$version" -d "StageDir=$stage" -d "RuntimeDlls=$($runtime -join ';')" `
+            -o "dist\$folder.msi"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      # Checks that the MSI holds exactly the staged files, has the right
+      # version, name and upgrade code, and installs without administrator
+      # rights.
+      - name: Check the MSI
+        shell: pwsh
+        run: |
+          $version = $env:GITHUB_REF_NAME.TrimStart('v')
+          $folder = "speechout-$version-windows-x86_64"
+          $msi = (Resolve-Path "dist\$folder.msi").Path
+          $upgradeCode = '{' + ([xml](Get-Content src\installer\speechout.wxs)).Wix.Package.UpgradeCode + '}'
+          # The Windows Installer COM objects only work through late binding.
+          function Msi($object, $name, $kind, [object[]]$arguments) {
+            $object.GetType().InvokeMember($name, $kind, $null, $object, $arguments)
+          }
+          $installer = New-Object -ComObject WindowsInstaller.Installer
+          $db = Msi $installer OpenDatabase InvokeMethod @($msi, 0)
+          function Query($sql) {
+            $view = Msi $db OpenView InvokeMethod @($sql)
+            Msi $view Execute InvokeMethod @() | Out-Null
+            while ($record = Msi $view Fetch InvokeMethod @()) { Msi $record StringData GetProperty @(1) }
+            Msi $view Close InvokeMethod @() | Out-Null
+          }
+          function Property($name) { Query "SELECT Value FROM Property WHERE Property = '$name'" }
+
+          $problems = @()
+          # File names are stored as "SHORT~1.DLL|long name.dll".
+          $inMsi = Query 'SELECT FileName FROM File' | ForEach-Object { ($_ -split '\|')[-1] } | Sort-Object
+          $staged = (Get-ChildItem "stage\$folder").Name | Sort-Object
+          Write-Host "Files in the MSI:" ($inMsi -join ', ')
+          if (Compare-Object @($inMsi) @($staged)) { $problems += "The MSI holds $($inMsi -join ', ') but the staged files are $($staged -join ', ')" }
+          $expected = @{ ProductVersion = $version; UpgradeCode = $upgradeCode; ProductName = 'SpeechOut'; Manufacturer = 'The Speech Output Engine contributors' }
+          foreach ($name in $expected.Keys) {
+            $value = Property $name
+            Write-Host "${name}: $value"
+            if ($value -ne $expected[$name]) { $problems += "$name is '$value', not '$($expected[$name])'" }
+          }
+          if (Property ALLUSERS) { $problems += 'ALLUSERS is set, so the MSI would not install for the current user only' }
+          # Bit 3 of the word count says that administrator rights aren't needed.
+          $summary = Msi $installer SummaryInformation GetProperty @($msi, 0)
+          if (-not ((Msi $summary Property GetProperty @(15)) -band 8)) { $problems += 'The MSI asks for administrator rights' }
+          if ($problems) { $problems | ForEach-Object { Write-Host "::error::$_" }; exit 1 }
+      # Installs an older build of the same MSI, upgrades it to this one,
+      # starts the installed app and uninstalls it, checking that the user's
+      # settings and data are left alone throughout. Does that twice, once
+      # without the right-click menu and once with it, checking that each
+      # upgrade keeps the choice, that Change (as Modify in Installed apps
+      # does it) adds or removes the menu, and that uninstalling removes it.
+      # The runner's account is an administrator, so this can't show that
+      # ordinary accounts need no administrator rights; the check above
+      # covers that.
+      - name: Test installing, upgrading and uninstalling the MSI
+        shell: pwsh
+        run: |
+          $version = $env:GITHUB_REF_NAME.TrimStart('v')
+          $folder = "speechout-$version-windows-x86_64"
+          $msi = (Resolve-Path "dist\$folder.msi").Path
+          $stage = (Resolve-Path "stage\$folder").Path
+          $upgradeCode = '{' + ([xml](Get-Content src\installer\speechout.wxs)).Wix.Package.UpgradeCode + '}'
+          $dir = "$env:LOCALAPPDATA\Programs\SpeechOut"
+          $shortcut = "$env:APPDATA\Microsoft\Windows\Start Menu\Programs\SpeechOut.lnk"
+          function Msi($object, $name, $kind, [object[]]$arguments) {
+            $object.GetType().InvokeMember($name, $kind, $null, $object, $arguments)
+          }
+          $installer = New-Object -ComObject WindowsInstaller.Installer
+          # PowerShell unrolls the list of product codes into strings.
+          function Installed {
+            foreach ($code in @(Msi $installer RelatedProducts GetProperty @($upgradeCode))) {
+              Msi $installer ProductInfo GetProperty @($code, 'VersionString')
+            }
+          }
+          function Msiexec($arguments, $log) {
+            $p = Start-Process msiexec.exe -ArgumentList ($arguments + '/qn', '/norestart', '/l*v', "`"$log`"") -Wait -PassThru
+            if ($p.ExitCode -ne 0) {
+              Get-Content $log -Tail 60
+              throw "msiexec $arguments failed with exit code $($p.ExitCode)"
+            }
+          }
+          function Check($ok, $message) { if (-not $ok) { throw $message } }
+
+          # The right-click menu's file types, from the installer's source.
+          if ((Get-Content -Raw src\installer\speechout.wxs) -notmatch '<\?define ContextMenuExtensions = ([^?]+)\?>') {
+            throw 'src\installer\speechout.wxs has no ContextMenuExtensions list'
+          }
+          $extensions = $Matches[1].Trim() -split ';'
+          $menuCommand = "`"$dir\speechout.exe`" --read `"%1`""
+          function Menu-Key($ext) { "HKCU:\Software\Classes\SystemFileAssociations\.$ext\shell\SpeechOut.ReadAloud" }
+          function Check-Menu($on, $when) {
+            foreach ($ext in $extensions) {
+              $key = Menu-Key $ext
+              if ($on) {
+                $command = (Get-ItemProperty "$key\command" -ErrorAction SilentlyContinue).'(default)'
+                Check ($command -eq $menuCommand) "After $when, the right-click menu for .$ext runs '$command', not '$menuCommand'"
+                Check ((Get-ItemProperty $key -ErrorAction SilentlyContinue).MUIVerb) "After $when, the right-click menu for .$ext has no label"
+              } else {
+                Check (-not (Test-Path $key)) "After $when, the right-click menu is still there for .$ext"
+              }
+            }
+          }
+
+          # Stand-ins for the settings, data and API keys the app keeps.
+          $kept = "$env:APPDATA\SpeechOut\msi-test.txt", "$env:LOCALAPPDATA\SpeechOut\msi-test.txt"
+          $kept | ForEach-Object { New-Item -ItemType File -Force $_ | Out-Null }
+          New-Item -Force HKCU:\Software\SpeechOut | Out-Null
+          Set-ItemProperty HKCU:\Software\SpeechOut -Name MsiTest -Value kept
+          function Check-Kept($when) {
+            $kept | ForEach-Object { Check (Test-Path $_) "$_ was removed $when" }
+            Check ((Get-ItemProperty HKCU:\Software\SpeechOut -ErrorAction SilentlyContinue).MsiTest -eq 'kept') "The registry key HKCU\Software\SpeechOut was changed $when"
+          }
+
+          $sherpa = 'sherpa-onnx-c-api.dll', 'onnxruntime.dll', 'onnxruntime_providers_shared.dll'
+          $runtime = (Get-ChildItem $stage -Filter *.dll | Where-Object { $_.Name -notin $sherpa }).Name
+          $old = "$env:RUNNER_TEMP\speechout-old.msi"
+          wix build src\installer\speechout.wxs -arch x64 -culture en-US -ext WixToolset.UI.wixext -pdbtype none `
+            -d "Version=0.0.1" -d "StageDir=$stage" -d "RuntimeDlls=$($runtime -join ';')" -o $old
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+          # A right-click menu item added by the app before version 2.8,
+          # which the installer clears away when the menu is left out.
+          New-Item -Force "$(Menu-Key pdf)\command" | Out-Null
+          Set-ItemProperty "$(Menu-Key pdf)\command" -Name '(default)' -Value '"C:\Old\speechout.exe" --read "%1"'
+
+          Msiexec @('/i', "`"$old`"", 'CONTEXTMENU=0') "$env:RUNNER_TEMP\install-old.log"
+          Check ((Installed) -eq '0.0.1') "The older MSI did not install: $(Installed)"
+          Check-Kept 'by installing'
+          Check-Menu $false 'installing without the right-click menu'
+
+          Msiexec @('/i', "`"$msi`"") "$env:RUNNER_TEMP\upgrade.log"
+          $versions = @(Installed)
+          Check ($versions.Count -eq 1 -and $versions[0] -eq $version) "After upgrading, the installed versions are: $($versions -join ', ')"
+          Check-Kept 'by upgrading'
+          Check-Menu $false 'upgrading, when the right-click menu was left out before'
+          Msiexec @('/i', "`"$msi`"", 'CONTEXTMENU=1', 'REINSTALL=ALL', 'REINSTALLMODE=omus') "$env:RUNNER_TEMP\change-on.log"
+          Check-Menu $true 'adding the right-click menu with Change'
+          $files = (Get-ChildItem $dir).Name | Sort-Object
+          Check (-not (Compare-Object @($files) @((Get-ChildItem $stage).Name | Sort-Object))) "$dir holds: $($files -join ', ')"
+          $target = (New-Object -ComObject WScript.Shell).CreateShortcut($shortcut).TargetPath
+          Check ($target -eq "$dir\speechout.exe") "The Start menu shortcut points at '$target'"
+          # The app can't start if Windows can't find one of its DLLs.
+          $out = "$env:RUNNER_TEMP\version.txt"
+          $p = Start-Process $target -ArgumentList '--version' -RedirectStandardOutput $out -Wait -PassThru
+          Check ($p.ExitCode -eq 0) "The installed app failed to start (exit code $($p.ExitCode))"
+          Write-Host "Installed app says:" (Get-Content $out)
+
+          Msiexec @('/x', "`"$msi`"") "$env:RUNNER_TEMP\uninstall.log"
+          Check (-not (Installed)) "Still installed after uninstalling: $(Installed)"
+          Check (-not (Test-Path $dir)) "$dir is still there after uninstalling"
+          Check (-not (Test-Path $shortcut)) 'The Start menu shortcut is still there after uninstalling'
+          Check (-not (Test-Path HKCU:\Software\SpeechOut\Installer)) 'HKCU\Software\SpeechOut\Installer is still there after uninstalling'
+          Check-Kept 'by uninstalling'
+          Check-Menu $false 'uninstalling'
+
+          # A new installation adds the menu, and an upgrade keeps it.
+          Msiexec @('/i', "`"$old`"") "$env:RUNNER_TEMP\install-old-menu.log"
+          Check-Menu $true 'a new installation'
+          Msiexec @('/i', "`"$msi`"") "$env:RUNNER_TEMP\upgrade-menu.log"
+          Check ((Installed) -eq $version) "After upgrading again, the installed version is $(Installed)"
+          Check-Menu $true 'upgrading, when the right-click menu was added before'
+          Msiexec @('/i', "`"$msi`"", 'CONTEXTMENU=0', 'REINSTALL=ALL', 'REINSTALLMODE=omus') "$env:RUNNER_TEMP\change-off.log"
+          Check-Menu $false 'removing the right-click menu with Change'
+          Msiexec @('/x', "`"$msi`"") "$env:RUNNER_TEMP\uninstall-menu.log"
+          Check (-not (Installed)) "Still installed after uninstalling again: $(Installed)"
+          Check (-not (Test-Path HKCU:\Software\SpeechOut\Installer)) 'HKCU\Software\SpeechOut\Installer is still there after uninstalling again'
+          Check-Kept 'by uninstalling again'
+
+          $kept | ForEach-Object { Remove-Item $_ }
+          Remove-ItemProperty HKCU:\Software\SpeechOut -Name MsiTest
+          Write-Host 'Installed, upgraded, changed, started and uninstalled, with and without the right-click menu; settings and data were kept.'
+      - uses: actions/upload-artifact@v7.0.1
+        with:
+          name: windows
+          path: dist/*.msi
+          if-no-files-found: error
+
+  linux:
+    name: Ubuntu .deb (amd64)
+    # The oldest supported Ubuntu LTS, so the package installs on 22.04 and later.
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: awalsh128/cache-apt-pkgs-action@v1.6.3
+        with:
+          packages: >-
+            pkg-config libasound2-dev libxkbcommon-dev libwayland-dev
+            libgl1-mesa-dev libx11-dev libxcursor-dev libxrandr-dev libxi-dev
+          version: 1
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2.9.2
+      - run: cargo test --locked
+      - run: cargo build --release --locked
+      - run: target/release/speechout --package-deb dist
+      # Debian names the file speechout_<version>_<arch>.deb; use hyphens to
+      # match the Windows and macOS downloads.
+      - name: Rename the .deb with hyphens
+        run: |
+          for f in dist/*.deb; do
+            mv "$f" "dist/$(basename "$f" | tr _ -)"
+          done
+          ls dist
+      - uses: actions/upload-artifact@v7.0.1
+        with:
+          name: linux
+          path: dist/*.deb
+          if-no-files-found: error
+
+  macos:
+    name: macOS .pkg (Apple Silicon)
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin
+      - uses: Swatinem/rust-cache@v2.9.2
+      - run: cargo test --locked
+      - run: cargo build --release --locked --target aarch64-apple-darwin
+      - run: target/aarch64-apple-darwin/release/speechout --package-macos dist
+      - name: Test installing the package
+        run: |
+          set -euo pipefail
+          pkg=$(ls dist/*.pkg)
+          sudo installer -pkg "$pkg" -target /
+          app="/Applications/Speech Output Engine.app"
+          codesign --verify --strict --verbose=2 "$app"
+          echo "Installed app says: $("$app/Contents/MacOS/speechout" --version)"
+          pkgutil --pkg-info io.github.mediaswing.speechout
+      - uses: actions/upload-artifact@v7.0.1
+        with:
+          name: macos
+          path: dist/*.pkg
+          if-no-files-found: error
+
+  release:
+    name: Publish release
+    needs: [windows, linux, macos]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - name: Read release notes from CHANGELOG.md
+        uses: ffurrer2/extract-release-notes@v3.1.0
+        with:
+          release_notes_file: changelog-notes.md
+      - uses: actions/download-artifact@v8.0.1
+        with:
+          path: artifacts
+          merge-multiple: true
+      # Scan before publishing so the results can go into the release notes.
+      # A VirusTotal outage must not block a release, so failures are allowed
+      # and the scan table is simply left out.
+      - name: Scan downloads with VirusTotal
+        id: virustotal
+        continue-on-error: true
+        uses: crazy-max/ghaction-virustotal@v5.0.0
+        with:
+          vt_api_key: ${{ secrets.VT_API_KEY }}
+          files: |
+            artifacts/*.deb
+            artifacts/*.msi
+            artifacts/*.pkg
+          # The free VirusTotal API allows 4 requests a minute.
+          request_rate: 4
+      - name: Write release notes
+        uses: actions/github-script@v9.0.0
+        env:
+          SCAN_OUTCOME: ${{ steps.virustotal.outcome }}
+        with:
+          script: |
+            const fs = require('fs');
+            const path = require('path');
+            const crypto = require('crypto');
+
+            // The changelog section may be empty (or absent).
+            let notes = fs.existsSync('changelog-notes.md')
+              ? fs.readFileSync('changelog-notes.md', 'utf8').trim()
+              : '';
+
+            if (process.env.SCAN_OUTCOME === 'success') {
+              const platform = (name) =>
+                name.endsWith('.msi') ? 'Windows installer' :
+                name.endsWith('.deb') ? 'Ubuntu' :
+                name.includes('-macos-') ? 'Apple Silicon' : '';
+              const rows = fs.readdirSync('artifacts').sort().map((name) => {
+                const sha = crypto.createHash('sha256')
+                  .update(fs.readFileSync(path.join('artifacts', name)))
+                  .digest('hex');
+                // The permanent report for this exact file.
+                const url = `https://www.virustotal.com/gui/file/${sha}`;
+                return `| \`${name}\` (${platform(name)}) | \`${sha}\` | [View scan](${url}) |`;
+              });
+              const table = [
+                '## VirusTotal scans',
+                '',
+                '| Download | SHA-256 | Report |',
+                '| --- | --- | --- |',
+                ...rows,
+              ].join('\n');
+              notes = notes ? `${notes}\n\n${table}` : table;
+            } else {
+              core.warning('VirusTotal scan failed; publishing without scan results.');
+            }
+
+            fs.writeFileSync('release-notes.md', notes + '\n');
+      - uses: softprops/action-gh-release@v3.0.3
+        with:
+          body_path: release-notes.md
+          files: |
+            artifacts/*.deb
+            artifacts/*.msi
+            artifacts/*.pkg
+          fail_on_unmatched_files: true

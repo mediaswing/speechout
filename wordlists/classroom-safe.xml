@@ -1,0 +1,53 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Example classroom-safe wordlist for the Speech Output Engine.
+  Replaces common swear words and slurs with mild alternatives so that
+  documents can be read aloud in front of a class. Enable or disable it on
+  the Wordlists tab. Matching is whole-word, so "Scunthorpe", "class" and
+  "assess" are not affected. Add more entries to suit your setting.
+-->
+<wordlist name="Classroom safe" description="Replaces swear words with mild alternatives for reading aloud in class" language="en-GB">
+  <entry match="fuck" replace="flip"/>
+  <entry match="fucks" replace="flips"/>
+  <entry match="fucked" replace="flipped"/>
+  <entry match="fucking" replace="flipping"/>
+  <entry match="fucker" replace="so-and-so"/>
+  <entry match="motherfucker" replace="so-and-so"/>
+  <entry match="shit" replace="shoot"/>
+  <entry match="shits" replace="shoots"/>
+  <entry match="shitty" replace="rubbish"/>
+  <entry match="bullshit" replace="nonsense"/>
+  <entry match="damn" replace="darn"/>
+  <entry match="dammit" replace="drat"/>
+  <entry match="goddamn" replace="darn"/>
+  <entry match="hell" replace="heck"/>
+  <entry match="crap" replace="rubbish"/>
+  <entry match="crappy" replace="rubbish"/>
+  <entry match="bitch" replace="meanie"/>
+  <entry match="bastard" replace="so-and-so"/>
+  <entry match="arse" replace="bottom"/>
+  <entry match="arsehole" replace="idiot"/>
+  <entry match="ass" replace="bottom"/>
+  <entry match="asshole" replace="idiot"/>
+  <entry match="dickhead" replace="idiot"/>
+  <entry match="dick" replace="idiot"/>
+  <entry match="prick" replace="idiot"/>
+  <entry match="twat" replace="idiot"/>
+  <entry match="wanker" replace="idiot"/>
+  <entry match="tosser" replace="idiot"/>
+  <entry match="bollocks" replace="nonsense"/>
+  <entry match="bloody" replace="very"/>
+  <entry match="piss" replace="wee"/>
+  <entry match="pissed" replace="annoyed"/>
+  <entry match="bugger" replace="blast"/>
+  <entry match="sod" replace="blast"/>
+  <entry match="slag" replace="unkind word"/>
+  <entry match="slut" replace="unkind word"/>
+  <entry match="whore" replace="unkind word"/>
+  <entry match="retard" replace="unkind word"/>
+  <entry match="retarded" replace="unkind word"/>
+  <entry match="spastic" replace="unkind word"/>
+  <entry match="spaz" replace="unkind word"/>
+  <entry match="wtf" replace="what on earth"/>
+  <entry match="omfg" replace="oh my goodness"/>
+</wordlist>
