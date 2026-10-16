@@ -87,7 +87,8 @@ the first time it starts.
 
 The window has five tabs across the top: **General**, **Settings**,
 **Wordlists**, **Audio Player** and **Describe Video**. Every button, box and dropdown sits on its own line and fills the
-width of the window. At the bottom, a progress bar shows how far through
+width of the window, except the two buttons at the bottom of the Describe
+Video tab, which share a line. At the bottom, a progress bar shows how far through
 reading aloud or saving audio you are (on the Describe Video tab it is under
 the preview instead), and a status line below it reports what
 is happening and any errors. Screen readers announce the status line
@@ -183,9 +184,8 @@ or on phone-quality audio. Choosing the number of people helps.
 | Choose a video… | Opens an MP4, M4V, MOV, MKV, WebM, AVI, WMV, MPEG or 3GP video and describes it. |
 | Preview | The picture being described. Screen readers read which picture it is and when it comes in the video. |
 | Progress bar | How far through describing the video the app is. |
-| Read aloud / Stop | Reads the description aloud. While the video is being described, Stop stops describing. |
-| Description of the video | Each picture's description, starting with when it comes, such as "At 1 minute 5 seconds:". You can review it with a screen reader. |
-| Save spoken text as audio… / Copy the description to the clipboard | Takes the description elsewhere. |
+| Read aloud / Stop | Reads the description aloud: each picture's description, starting with when it comes, such as "At 1 minute 5 seconds:". While the video is being described, Stop stops describing. |
+| Save spoken text as audio… / Copy the description to the clipboard | Side by side on one line. Takes the description elsewhere. |
 
 The app uses ffmpeg to take the keyframes out of the video. These are the
 whole pictures a video is built from; the frames between them only record

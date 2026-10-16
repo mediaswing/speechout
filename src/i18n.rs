@@ -501,8 +501,6 @@ const ENGLISH: &[(&str, &str)] = &[
     ("video.failed", "Could not describe the video. {error}"),
     ("video.busy", "Wait for the app to finish what it is doing, or stop it, then choose the video again."),
     ("video.nothing", "There is no description yet.{open_hint}"),
-    ("video.label", "Description of the video"),
-    ("video.none", "No description yet."),
     ("video.copy", "Copy the description to the clipboard"),
     ("whisper.download_title", "Download the speech recognition model"),
     (

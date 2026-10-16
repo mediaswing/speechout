@@ -12,6 +12,11 @@ All notable changes to the Speech Output Engine are listed here.
   application menu, and the macOS app bundle. It replaces the generic
   speaker icon on Linux.
 
+### Changed
+
+- The Describe Video tab no longer shows the description as text. Its Save
+  and Copy buttons share one line, each half the width of the window.
+
 ## [3.1.0] - 2026-10-15
 
 ### Added

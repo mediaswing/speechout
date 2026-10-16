@@ -2584,7 +2584,7 @@ impl SpeechApp {
     }
 
     /// The file picker, with the picture being described under it and the
-    /// progress bar under that, then the description.
+    /// progress bar under that, then buttons for the description.
     fn video_tab(&mut self, ui: &mut Ui) {
         heading(ui, &t("video.heading"));
         let describing = matches!(self.job, Some((JobKind::DescribingVideo, _)));
@@ -2615,12 +2615,17 @@ impl SpeechApp {
         if full_button(ui, &stop_label, self.is_busy()).clicked() {
             self.stop();
         }
-        let text = if has_text { self.video_text.clone() } else { t("video.none") };
-        text_area(ui, &t("video.label"), &text);
-        if full_button(ui, &self.keyed("general.save", Action::Save), has_text && !self.is_busy()).clicked() {
+        let save_label = self.keyed("general.save", Action::Save);
+        let can_save = has_text && !self.is_busy();
+        let (mut save, mut copy) = (false, false);
+        ui.columns(2, |cols| {
+            save = full_button(&mut cols[0], &save_label, can_save).clicked();
+            copy = full_button(&mut cols[1], &t("video.copy"), has_text).clicked();
+        });
+        if save {
             self.save_audio();
         }
-        if full_button(ui, &t("video.copy"), has_text).clicked() {
+        if copy {
             let ctx = ui.ctx().clone();
             self.copy_text(&ctx);
         }
