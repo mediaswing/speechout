@@ -60,6 +60,8 @@
     <MediaTemplate EmbedCab="yes" />
 
     <!-- Shown in the installed apps list. -->
+    <Icon Id="speechout.ico" SourceFile="$(sys.SOURCEFILEDIR)..\..\assets\icon\speechout.ico" />
+    <Property Id="ARPPRODUCTICON" Value="speechout.ico" />
     <Property Id="ARPCOMMENTS" Value="Speech Output Engine: an accessible text-to-speech reader for documents and images" />
     <Property Id="ARPURLINFOABOUT" Value="https://github.com/mediaswing/speechout" />
     <Property Id="ARPHELPLINK" Value="https://github.com/mediaswing/speechout/issues" />

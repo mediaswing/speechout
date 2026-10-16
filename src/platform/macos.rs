@@ -263,6 +263,7 @@ pub fn package(out_dir: &Path) -> anyhow::Result<std::path::PathBuf> {
     }
     std::fs::write(contents.join("Info.plist"), info_plist())?;
     std::fs::write(contents.join("PkgInfo"), b"APPL????")?;
+    std::fs::write(contents.join("Resources/speechout.icns"), include_bytes!("../../assets/icon/speechout.icns"))?;
     // The embedded fonts' licence must travel with them.
     std::fs::write(contents.join("Resources/fonts-OFL.txt"), include_bytes!("../../assets/fonts/OFL.txt"))?;
 
@@ -393,6 +394,7 @@ fn info_plist() -> String {
     <key>CFBundleDisplayName</key><string>{APP_NAME}</string>
     <key>CFBundleName</key><string>{APP_NAME}</string>
     <key>CFBundleExecutable</key><string>speechout</string>
+    <key>CFBundleIconFile</key><string>speechout</string>
     <key>CFBundleIdentifier</key><string>{BUNDLE_ID}</string>
     <key>CFBundleInfoDictionaryVersion</key><string>6.0</string>
     <key>CFBundlePackageType</key><string>APPL</string>

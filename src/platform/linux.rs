@@ -247,7 +247,7 @@ Name=Speech Output Engine
 GenericName=Text to speech reader
 Comment=Read documents and describe photos aloud
 Exec=speechout
-Icon=audio-speakers
+Icon=speechout
 Terminal=false
 Categories=Utility;Accessibility;AudioVideo;Audio;
 Keywords=speech;tts;screen reader;accessibility;pdf;markdown;docx;odt;csv;ods;pptx;ppt;powerpoint;
@@ -262,6 +262,11 @@ Copyright: 2026 The Speech Output Engine contributors
 License: GPL-3.0-or-later
  On Debian systems, the full text of the GNU General Public License
  version 3 can be found in /usr/share/common-licenses/GPL-3.
+
+Files: usr/share/icons/hicolor/*/apps/speechout.*
+Copyright: Laura Reen (Xomo: basics icon set)
+License: other
+ From https://icon-icons.com/icon/chat-bubbles-speech-conversation-writing/121951
 
 Files: embedded fonts (Google Sans Medium and Bold)
 Copyright: Google LLC
@@ -337,6 +342,16 @@ pub fn package(out_dir: &Path) -> anyhow::Result<PathBuf> {
     let files: Vec<DebFile> = vec![
         ("./usr/bin/speechout", 0o755, binary),
         ("./usr/share/applications/speechout.desktop", 0o644, DESKTOP_ENTRY.as_bytes().to_vec()),
+        (
+            "./usr/share/icons/hicolor/256x256/apps/speechout.png",
+            0o644,
+            include_bytes!("../../assets/icon/speechout.png").to_vec(),
+        ),
+        (
+            "./usr/share/icons/hicolor/scalable/apps/speechout.svg",
+            0o644,
+            include_bytes!("../../assets/icon/speechout.svg").to_vec(),
+        ),
         ("./usr/share/doc/speechout/copyright", 0o644, COPYRIGHT.as_bytes().to_vec()),
         (
             "./usr/share/doc/speechout/fonts-OFL.txt",
@@ -350,6 +365,12 @@ pub fn package(out_dir: &Path) -> anyhow::Result<PathBuf> {
         "./usr/bin/",
         "./usr/share/",
         "./usr/share/applications/",
+        "./usr/share/icons/",
+        "./usr/share/icons/hicolor/",
+        "./usr/share/icons/hicolor/256x256/",
+        "./usr/share/icons/hicolor/256x256/apps/",
+        "./usr/share/icons/hicolor/scalable/",
+        "./usr/share/icons/hicolor/scalable/apps/",
         "./usr/share/doc/",
         "./usr/share/doc/speechout/",
     ];

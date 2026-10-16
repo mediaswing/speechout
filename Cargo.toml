@@ -42,6 +42,10 @@ log = "0.4"
 anyhow = "1"
 whisper-rs = { version = "0.16", features = ["log_backend", "raw-api"] }
 
+[build-dependencies]
+# Embeds the icon in the Windows executable.
+winresource = "0.1"
+
 [features]
 # Windows only: decode HEIC photos with libheif and libde265 built into the
 # app, so the Microsoft Store add-ons are not needed. Needs libheif installed

@@ -99,7 +99,11 @@ fn run_gui() -> ExitCode {
             .with_title(app::APP_TITLE)
             .with_app_id("speechout")
             .with_inner_size([640.0, 820.0])
-            .with_min_inner_size([360.0, 480.0]),
+            .with_min_inner_size([360.0, 480.0])
+            .with_icon(
+                eframe::icon_data::from_png_bytes(include_bytes!("../assets/icon/speechout.png"))
+                    .expect("the bundled icon is a valid PNG"),
+            ),
         ..Default::default()
     };
     let result = eframe::run_native(

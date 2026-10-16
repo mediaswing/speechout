@@ -557,6 +557,7 @@ src/installer/        The Windows Installer package, built with WiX Toolset
 wordlists/            Example wordlists (built into the app)
 assets/fonts/         Google Sans fonts (built into the app) and their licence
 assets/sounds/        Success and failure sounds (built into the app) and credits
+assets/icon/          The app icon (SVG source and rendered PNG, ICO, ICNS) and credits
 assets/tests/         Test data used by the unit tests
 ```
 
@@ -572,6 +573,9 @@ The fonts are built into the app and are licensed under the
 The success and failure sounds come from [Freesound](https://freesound.org)
 and are released under Creative Commons 0; see
 [assets/sounds/CREDITS.txt](assets/sounds/CREDITS.txt).
+
+The app icon is "chat bubbles, speech, conversation, writing" by Laura Reen,
+from her Xomo: basics set; see [assets/icon/CREDITS.txt](assets/icon/CREDITS.txt).
 
 Speech recognition uses [whisper.cpp](https://github.com/ggml-org/whisper.cpp),
 which is built into the app and is licensed under the MIT License. The Whisper
