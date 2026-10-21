@@ -97,7 +97,7 @@ pub fn extract_text(path: &Path, reading: DocumentReading) -> anyhow::Result<Str
 }
 
 /// Decodes UTF-8 or UTF-16 (with byte order mark), falling back to Windows-1252
-/// style lossy decoding for legacy files.
+/// for legacy files.
 fn read_txt(bytes: &[u8]) -> String {
     match bytes {
         [0xEF, 0xBB, 0xBF, rest @ ..] => String::from_utf8_lossy(rest).into_owned(),
@@ -105,9 +105,23 @@ fn read_txt(bytes: &[u8]) -> String {
         [0xFE, 0xFF, rest @ ..] => decode_utf16(rest, u16::from_be_bytes),
         _ => match std::str::from_utf8(bytes) {
             Ok(s) => s.to_owned(),
-            // Latin-1 maps every byte to a character, so nothing is lost silently.
-            Err(_) => bytes.iter().map(|&b| char::from(b)).collect(),
+            Err(_) => bytes.iter().map(|&b| windows_1252(b)).collect(),
         },
+    }
+}
+
+/// Windows-1252 matches Latin-1 except for 0x80 to 0x9F, where Latin-1 has
+/// invisible control characters and Windows-1252 has curly quotes, dashes,
+/// the euro sign and so on. The five bytes it leaves unassigned stay control
+/// characters, which `tidy` drops.
+fn windows_1252(b: u8) -> char {
+    const HIGH: [char; 32] = [
+        '€', '\u{81}', '‚', 'ƒ', '„', '…', '†', '‡', 'ˆ', '‰', 'Š', '‹', 'Œ', '\u{8D}', 'Ž', '\u{8F}',
+        '\u{90}', '‘', '’', '“', '”', '•', '–', '—', '˜', '™', 'š', '›', 'œ', '\u{9D}', 'ž', 'Ÿ',
+    ];
+    match b {
+        0x80..=0x9F => HIGH[usize::from(b - 0x80)],
+        _ => char::from(b),
     }
 }
 
@@ -2060,14 +2074,7 @@ pub const MAX_PASTED_CHARS: usize = 200_000;
 /// `MAX_PASTED_CHARS`, stripped of invisible characters that can hide words or
 /// reorder how text is shown, then tidied like text from a file.
 pub fn clean_pasted(text: &str) -> String {
-    // Windows puts "\r\n" at the end of each line it copies, which `tidy`
-    // would otherwise take as a paragraph break.
-    let visible: String = text
-        .chars()
-        .take(MAX_PASTED_CHARS)
-        .filter(|c| !is_hidden_format(*c))
-        .collect::<String>()
-        .replace("\r\n", "\n");
+    let visible: String = text.chars().take(MAX_PASTED_CHARS).filter(|c| !is_hidden_format(*c)).collect();
     tidy(&visible)
 }
 
@@ -2082,9 +2089,12 @@ fn is_hidden_format(c: char) -> bool {
 }
 
 /// Normalises whitespace: joins lines broken mid-sentence by PDF layout while
-/// keeping paragraph breaks, and drops control characters.
+/// keeping paragraph breaks, and drops control characters. A Windows line
+/// ending ("\r\n") is one line break, not two, so it is not taken as a
+/// paragraph break.
 fn tidy(text: &str) -> String {
     let cleaned: String = text
+        .replace("\r\n", "\n")
         .chars()
         .map(|c| if c == '\r' || c == '\u{c}' { '\n' } else { c })
         .filter(|c| !c.is_control() || *c == '\n' || *c == '\t')
@@ -2570,6 +2580,24 @@ mod tests {
         assert_eq!(read_txt(&[0xEF, 0xBB, 0xBF, b'h', b'i']), "hi");
         assert_eq!(read_txt(&[0xFF, 0xFE, b'h', 0, b'i', 0]), "hi");
         assert_eq!(read_txt(&[b'c', 0xE9]), "c\u{e9}");
+    }
+
+    #[test]
+    fn txt_windows_1252_punctuation_survives() {
+        // don’t “hi” £5–£10 €3… as saved by older Windows programs.
+        let bytes = b"don\x92t \x93hi\x94 \xA35\x96\xA310 \x803\x85";
+        assert_eq!(tidy(&read_txt(bytes)), "don’t “hi” £5–£10 €3…");
+        // Bytes Windows-1252 leaves unassigned are dropped, not kept as junk.
+        assert_eq!(tidy(&read_txt(b"a\x81b\x9Dc\xE9")), "abcé");
+    }
+
+    #[test]
+    fn windows_line_endings_are_single_line_breaks() {
+        let wrapped = "The quick brown fox\r\njumps over the dog.\r\n\r\nNext paragraph.\r\n";
+        assert_eq!(tidy(wrapped), "The quick brown fox jumps over the dog.\n\nNext paragraph.");
+        // Old Mac line endings and Unix ones read the same.
+        assert_eq!(tidy("a\rb\r\rc"), "a b\n\nc");
+        assert_eq!(tidy("a\nb\n\nc"), "a b\n\nc");
     }
 
     #[test]
