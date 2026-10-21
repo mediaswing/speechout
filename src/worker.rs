@@ -196,7 +196,7 @@ pub fn load_voices(rep: Reporter, provider: Provider, key: Option<String>) {
 }
 
 pub fn load_models(rep: Reporter) {
-    rep.send(Msg::Models(crate::vision::list_models().map_err(err)));
+    rep.send(Msg::Models(crate::ollama::list_models().map_err(err)));
 }
 
 /// Installs Ollama with the package manager if `install` is true, then starts
@@ -209,9 +209,9 @@ pub fn set_up_ollama(rep: Reporter, install: bool) {
             rep.send(Msg::Status(t("ollama.installed")));
         }
         // The installer may already have started it.
-        if !crate::vision::wait_until_running(Duration::from_secs(2)) {
+        if !crate::ollama::wait_until_running(Duration::from_secs(2)) {
             crate::platform::start_ollama()?;
-            if !crate::vision::wait_until_running(Duration::from_secs(60)) {
+            if !crate::ollama::wait_until_running(Duration::from_secs(60)) {
                 anyhow::bail!("Ollama was started but is not answering. Try restarting the computer");
             }
         }
@@ -224,7 +224,7 @@ pub fn set_up_ollama(rep: Reporter, install: bool) {
 /// quarter. Escape stops it.
 pub fn download_model(rep: Reporter, control: Arc<Control>, model: String) {
     let mut quarters = Quarters::new(&rep, "model.download_progress");
-    let result = crate::vision::pull_model(&model, |f| quarters.report(&rep, f), || control.is_stopped());
+    let result = crate::ollama::pull_model(&model, |f| quarters.report(&rep, f), || control.is_stopped());
     rep.send(Msg::ModelDownloaded(model, result.map_err(err)));
 }
 

@@ -528,7 +528,7 @@ compiled with clang-cl there, as the release workflow shows. The
 installer's `UpgradeCode` must never change, or new versions won't replace
 old ones. The installer also adds the right-click menu, for the kinds of file
 listed in its `ContextMenuExtensions`, which must match `EXTENSIONS` in
-`src/document.rs`; a test checks this. Ad hoc
+`src/document/mod.rs`; a test checks this. Ad hoc
 signing lets the app run on Apple Silicon. On macOS, the `.pkg` is built with
 `pkgbuild` and `productbuild`, which come with macOS; the app bundle is also
 left in `dist/root` for trying it without installing.
@@ -561,8 +561,10 @@ src/worker.rs         Background jobs (speaking, saving, loading)
 src/speech/           System and cloud voices
 src/audio.rs          Decoding, playback, WAV and MP3 export, and the speech check
 src/playlist.rs       Zip files of audio played as playlists
-src/document.rs       PDF, TXT, Markdown, DOCX, ODT, CSV, ODS, PPTX, PPT and EPUB text extraction
+src/document/         Text extraction, one file per format: PDF, TXT, Markdown, DOCX,
+                      ODT and ODS, CSV, PPTX, PPT and EPUB
 src/vision.rs         Photo descriptions, GPS and place names
+src/ollama.rs         Talking to Ollama, the local AI model server
 src/video.rs          Taking keyframes out of a video with ffmpeg
 src/transcribe.rs     Speech recognition with Whisper, and downloading its models
 src/speakers.rs       Working out who is speaking, with sherpa-onnx

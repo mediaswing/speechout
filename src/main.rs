@@ -9,6 +9,7 @@ mod background;
 mod document;
 mod i18n;
 mod logging;
+mod ollama;
 mod paths;
 mod platform;
 mod playlist;

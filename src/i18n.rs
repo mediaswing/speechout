@@ -1014,7 +1014,7 @@ fn prompt(language: &Language, batch: &BTreeMap<&str, &str>) -> String {
 /// translations that can be used; any the model got wrong are left out.
 pub fn translate_batch(model: &str, language: &Language, keys: &[&'static str]) -> anyhow::Result<BTreeMap<String, String>> {
     let batch: BTreeMap<&str, &str> = keys.iter().filter_map(|k| Some((*k, english(k)?))).collect();
-    let reply = crate::vision::generate(model, &prompt(language, &batch), Some(json!("json")))?;
+    let reply = crate::ollama::generate(model, &prompt(language, &batch), Some(json!("json")))?;
     let reply: Value = serde_json::from_str(reply.trim()).context("the AI model did not reply with a translation")?;
     let Some(reply) = reply.as_object() else { bail!("the AI model did not reply with a translation") };
     let mut out = BTreeMap::new();

@@ -32,7 +32,7 @@
 <Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
   <!--
     The kinds of file the right-click menu is for. They must match EXTENSIONS
-    in src/document.rs, which a test there checks.
+    in src/document/mod.rs, which a test there checks.
   -->
   <?define ContextMenuExtensions = pdf;txt;md;markdown;docx;odt;csv;ods;pptx;ppt;epub;jpg;jpeg;png;jxl;heic;heif ?>
 
