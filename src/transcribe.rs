@@ -360,7 +360,7 @@ mod tests {
         let wav = crate::speech::synthesize(crate::speech::Provider::System, None, "", said, 1.0).unwrap();
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("said.wav");
-        crate::audio::save(&crate::audio::decode(wav).unwrap(), &path, crate::audio::AudioFormat::Wav).unwrap();
+        crate::audio::save(&crate::audio::decode(wav).unwrap(), &path, crate::audio::AudioFormat::Wav, &Default::default()).unwrap();
         let audio = crate::audio::listen(&path, || false).unwrap().unwrap();
         assert_eq!(audio.sound, crate::audio::SoundKind::Speech);
 

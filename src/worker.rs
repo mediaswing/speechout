@@ -431,7 +431,7 @@ pub fn speak(rep: Reporter, control: Arc<Control>, job: SpeechJob) {
     }
 }
 
-pub fn save(rep: Reporter, control: Arc<Control>, job: SpeechJob, path: PathBuf, format: AudioFormat) {
+pub fn save(rep: Reporter, control: Arc<Control>, job: SpeechJob, path: PathBuf, format: AudioFormat, tags: audio::Tags) {
     let chunks = job.pieces();
     let total = chunks.len();
     let mut pieces = Vec::with_capacity(total);
@@ -459,7 +459,7 @@ pub fn save(rep: Reporter, control: Arc<Control>, job: SpeechJob, path: PathBuf,
         }
     }
     let joined = audio::concat(&pieces);
-    match audio::save(&joined, &path, format) {
+    match audio::save(&joined, &path, format, &tags) {
         Ok(()) => {
             let name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
             log::info!("saved audio ({} samples)", joined.samples.len());

@@ -1116,10 +1116,13 @@ impl SpeechApp {
             Source::File => self.file.as_ref(),
             Source::Paste => None,
         };
-        let stem = file
+        // The document's name, which the saved file is named after and which
+        // its tags give as the album.
+        let album = file
             .and_then(|f| f.file_stem())
             .map(|s| s.to_string_lossy().into_owned())
-            .unwrap_or_else(|| t("save.default_name"));
+            .unwrap_or_default();
+        let stem = if album.is_empty() { t("save.default_name") } else { album.clone() };
         let Some(mut path) = rfd::FileDialog::new()
             .set_title(t("save.dialog_title"))
             .set_file_name(format!("{stem}.{}", format.extension()))
@@ -1146,12 +1149,21 @@ impl SpeechApp {
         } else if on_video {
             job.text = format!("{}\n\n{}", job.text.trim_end(), job.provider.video_description_note());
         }
+        let tags = crate::audio::Tags {
+            title: path.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default(),
+            // The default system voice has no name of its own.
+            artist: self
+                .current_voice(job.provider)
+                .filter(|v| !v.id.is_empty())
+                .map_or_else(|| job.provider.name(), |v| v.name.clone()),
+            album,
+        };
         let control = Arc::new(Control::default());
         self.job = Some((JobKind::Saving, control.clone()));
         self.progress = 0.0;
         let usage = Self::usage_note(&job, false);
         self.announce(tf("save.preparing", &[("name", &file_name(&path)), ("usage", &usage)]));
-        self.rep.spawn(move |rep| worker::save(rep, control, job, path, format));
+        self.rep.spawn(move |rep| worker::save(rep, control, job, path, format, tags));
     }
 
     fn save_keys(&mut self) {

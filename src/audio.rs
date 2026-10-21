@@ -98,13 +98,27 @@ fn to_i16(samples: &[f32]) -> Vec<i16> {
     samples.iter().map(|s| (s.clamp(-1.0, 1.0) * f32::from(i16::MAX)) as i16).collect()
 }
 
-pub fn save(pcm: &Pcm, path: &Path, format: AudioFormat) -> anyhow::Result<()> {
+/// What a saved recording says about itself, so music players and file
+/// managers can show more than the file name. Written into MP3 files as an
+/// ID3 tag; WAV files have no tag. Empty fields are left out.
+#[derive(Clone, Debug, Default)]
+pub struct Tags {
+    /// Shown as the track's title: the saved file's name.
+    pub title: String,
+    /// Shown as the artist: the voice that read it.
+    pub artist: String,
+    /// Shown as the album: the document it was read from, so recordings of
+    /// the same document are grouped together.
+    pub album: String,
+}
+
+pub fn save(pcm: &Pcm, path: &Path, format: AudioFormat, tags: &Tags) -> anyhow::Result<()> {
     if pcm.samples.is_empty() {
         bail!("there is no audio to save");
     }
     let bytes = match format {
         AudioFormat::Wav => encode_wav(pcm)?,
-        AudioFormat::Mp3 => encode_mp3(pcm)?,
+        AudioFormat::Mp3 => [id3_tag(tags), encode_mp3(pcm)?].concat(),
     };
     std::fs::write(path, bytes).with_context(|| format!("could not write {}", path.display()))
 }
@@ -144,6 +158,36 @@ fn encode_mp3(pcm: &Pcm) -> anyhow::Result<Vec<u8>> {
     out.reserve(7200);
     encoder.flush_to_vec::<FlushNoGap>(&mut out).map_err(|e| lame_err(&e))?;
     Ok(out)
+}
+
+/// An ID3v2.3 tag, to go at the start of an MP3 file, naming `tags` and the
+/// app that made it. Version 2.3 with UTF-16 text is what Windows File
+/// Explorer, Apple Music and other players all read; LAME's own tag writer
+/// would only take Latin-1, losing names such as "Café" or "日本語".
+fn id3_tag(tags: &Tags) -> Vec<u8> {
+    let software = format!("{} {}", crate::app::APP_TITLE, env!("CARGO_PKG_VERSION"));
+    let fields = [(b"TIT2", &tags.title), (b"TPE1", &tags.artist), (b"TALB", &tags.album), (b"TSSE", &software)];
+    let mut frames = Vec::new();
+    for (id, text) in fields {
+        let text: String = text.chars().filter(|c| !c.is_control()).collect();
+        let text = text.trim();
+        if text.is_empty() {
+            continue;
+        }
+        // Encoding 1 is UTF-16 with a byte order mark.
+        let mut body = vec![1, 0xFF, 0xFE];
+        body.extend(text.encode_utf16().flat_map(u16::to_le_bytes));
+        frames.extend_from_slice(id);
+        frames.extend_from_slice(&(body.len() as u32).to_be_bytes());
+        frames.extend_from_slice(&[0, 0]);
+        frames.extend(body);
+    }
+    // The tag's size is written seven bits to a byte, as ID3 requires.
+    let size = frames.len() as u32;
+    let mut tag = b"ID3\x03\x00\x00".to_vec();
+    tag.extend([21, 14, 7, 0].map(|shift| (size >> shift & 0x7F) as u8));
+    tag.extend(frames);
+    tag
 }
 
 /// Plays decoded speech through the default output device.
@@ -515,6 +559,67 @@ mod tests {
         let bytes = encode_mp3(&tone()).unwrap();
         let back = decode(bytes).unwrap();
         assert!(back.samples.len() > 20_000);
+    }
+
+    /// The text frames of an ID3v2.3 tag, as (frame ID, text).
+    fn read_id3(bytes: &[u8]) -> Vec<(String, String)> {
+        assert_eq!(&bytes[..6], b"ID3\x03\x00\x00");
+        let size = bytes[6..10].iter().fold(0, |n, b| n << 7 | usize::from(*b));
+        let mut frames = &bytes[10..10 + size];
+        let mut out = Vec::new();
+        while !frames.is_empty() {
+            let id = String::from_utf8(frames[..4].to_vec()).unwrap();
+            let len = u32::from_be_bytes(frames[4..8].try_into().unwrap()) as usize;
+            let body = &frames[10..10 + len];
+            assert_eq!(&body[..3], &[1, 0xFF, 0xFE], "{id} is UTF-16 with a byte order mark");
+            let units: Vec<u16> = body[3..].chunks(2).map(|c| u16::from_le_bytes([c[0], c[1]])).collect();
+            out.push((id, String::from_utf16(&units).unwrap()));
+            frames = &frames[10 + len..];
+        }
+        out
+    }
+
+    #[test]
+    fn saved_mp3_has_id3_tags() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("speech.mp3");
+        let tags = Tags {
+            title: "Chapter 1: Café".into(),
+            artist: "Draco (British English, masculine)".into(),
+            album: "日本語のレポート".into(),
+        };
+        save(&tone(), &path, AudioFormat::Mp3, &tags).unwrap();
+        let bytes = std::fs::read(&path).unwrap();
+        let software = format!("Speech Output Engine {}", env!("CARGO_PKG_VERSION"));
+        assert_eq!(
+            read_id3(&bytes),
+            [
+                ("TIT2".into(), "Chapter 1: Café".into()),
+                ("TPE1".into(), "Draco (British English, masculine)".into()),
+                ("TALB".into(), "日本語のレポート".into()),
+                ("TSSE".into(), software),
+            ]
+        );
+        // The tag doesn't get in the way of playing it.
+        assert!(decode(bytes).unwrap().samples.len() > 20_000);
+    }
+
+    #[test]
+    fn empty_tags_are_left_out() {
+        let tags = Tags { title: " \n ".into(), artist: String::new(), album: "Notes\u{0}".into() };
+        let frames = read_id3(&id3_tag(&tags));
+        let ids: Vec<&str> = frames.iter().map(|(id, _)| id.as_str()).collect();
+        assert_eq!(ids, ["TALB", "TSSE"]);
+        assert_eq!(frames[0].1, "Notes");
+    }
+
+    #[test]
+    fn wav_has_no_id3_tag() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("speech.wav");
+        let tags = Tags { title: "Title".into(), ..Tags::default() };
+        save(&tone(), &path, AudioFormat::Wav, &tags).unwrap();
+        assert_eq!(&std::fs::read(&path).unwrap()[..4], b"RIFF");
     }
 
     fn resampled(from: u32, to: u32, samples: &[f32]) -> Vec<f32> {

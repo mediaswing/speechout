@@ -441,7 +441,7 @@ mod tests {
         }
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("conversation.wav");
-        crate::audio::save(&pcm.unwrap(), &path, crate::audio::AudioFormat::Wav).unwrap();
+        crate::audio::save(&pcm.unwrap(), &path, crate::audio::AudioFormat::Wav, &Default::default()).unwrap();
         let audio = Arc::new(crate::audio::listen(&path, || false).unwrap().unwrap());
 
         let words = transcribe(model, &audio.pcm.samples, true, |_| (), || false).unwrap().unwrap();
