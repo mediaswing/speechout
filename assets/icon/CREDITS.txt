@@ -1,0 +1,5 @@
+speechout.svg: "chat bubbles, speech, conversation, writing" by Laura Reen,
+from the Xomo: basics set.
+https://icon-icons.com/icon/chat-bubbles-speech-conversation-writing/121951
+
+speechout.png, speechout.ico and speechout.icns are rendered from it unchanged.

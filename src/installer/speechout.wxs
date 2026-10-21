@@ -1,0 +1,287 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  The Windows Installer package (.msi) for SpeechOut, built with WiX Toolset 6
+  by the windows job in .github/workflows/release.yml. It installs the
+  files the workflow copies into its staging folder.
+
+  Variables, given with -d on the wix build command line:
+    Version      The version, from the tag (for example 2.5.0).
+    StageDir     The folder holding speechout.exe and its DLLs.
+    RuntimeDlls  The Visual C++ runtime DLLs in StageDir, separated by
+                 semicolons. The list comes from the exe's imports, so it can
+                 change between releases.
+
+  The app is installed for the current user only, in
+  %LOCALAPPDATA%\Programs\SpeechOut, so no administrator rights are needed.
+  Its settings and data live elsewhere (%APPDATA%\SpeechOut,
+  %LOCALAPPDATA%\SpeechOut and HKEY_CURRENT_USER\Software\SpeechOut), and the
+  installer never touches them, so they are kept through upgrades and
+  uninstalling.
+
+  Files under the user's profile can't be the key path of a component (ICE38),
+  so each component has a registry value under
+  HKEY_CURRENT_USER\Software\SpeechOut\Installer as its key path instead.
+  WiX can't generate GUIDs for components like that, so each has a fixed GUID
+  written here. Never change them.
+
+  The installer also adds "Read aloud" to the right-click menu in File
+  Explorer, unless the user unticks it on the Right-click menu page or installs
+  with CONTEXTMENU=0. The choice is kept for upgrades, and Modify in Installed
+  apps offers Change to make it again. See the ContextMenu component.
+-->
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
+  <!--
+    The kinds of file the right-click menu is for. They must match EXTENSIONS
+    in src/platform/context_menu.rs, which a test there checks.
+  -->
+  <?define ContextMenuExtensions = pdf;txt;md;markdown;docx;odt;csv;ods;pptx;ppt;jpg;jpeg;png;jxl;heic;heif ?>
+
+  <!--
+    Never change the UpgradeCode: it is how a new version finds and replaces
+    the one already installed.
+  -->
+  <Package
+      Name="Speech Output Engine"
+      Manufacturer="The Speech Output Engine contributors"
+      Version="$(var.Version)"
+      UpgradeCode="11921D60-A030-4F11-914E-C2739604B673"
+      Scope="perUser"
+      Language="1033">
+
+    <!--
+      The old version is removed before the new one is installed. Same-version
+      upgrades are allowed so that a rebuilt package replaces the installed one
+      rather than appearing a second time in the installed apps list.
+    -->
+    <MajorUpgrade
+        AllowSameVersionUpgrades="yes"
+        DowngradeErrorMessage="A newer version of [ProductName] is already installed. To install this one, first uninstall the newer version from Installed apps in Windows Settings." />
+
+    <MediaTemplate EmbedCab="yes" />
+
+    <!-- Shown in the installed apps list. -->
+    <Icon Id="speechout.ico" SourceFile="$(sys.SOURCEFILEDIR)..\..\assets\icon\speechout.ico" />
+    <Property Id="ARPPRODUCTICON" Value="speechout.ico" />
+    <Property Id="ARPCOMMENTS" Value="Speech Output Engine: an accessible text-to-speech reader for documents and images" />
+    <Property Id="ARPURLINFOABOUT" Value="https://github.com/mediaswing/speechout" />
+    <Property Id="ARPHELPLINK" Value="https://github.com/mediaswing/speechout/issues" />
+    <Property Id="ARPURLUPDATEINFO" Value="https://github.com/mediaswing/speechout/releases" />
+
+    <!-- Upgrade into the folder the previous version was installed in. -->
+    <Property Id="INSTALLFOLDER">
+      <RegistrySearch Id="PreviousInstallFolder" Root="HKCU" Key="Software\SpeechOut\Installer" Name="InstallFolder" Type="raw" />
+    </Property>
+
+    <!--
+      Whether to add Read aloud to the right-click menu: 1 or 0. A value given
+      on the command line is used as it is. Otherwise it is the choice made
+      when this version or an earlier one was installed, which the ContextMenu
+      and NoContextMenu components record. Versions before 2.8 let the app add
+      the menu itself, so an upgrade from one of those keeps the menu only if
+      it was added. A new installation adds it.
+    -->
+    <Property Id="CONTEXTMENU" Secure="yes" />
+    <Property Id="CONTEXTMENUON">
+      <RegistrySearch Id="ContextMenuOnSearch" Root="HKCU" Key="Software\SpeechOut\Installer" Name="ContextMenu" Type="raw" />
+    </Property>
+    <Property Id="CONTEXTMENUOFF">
+      <RegistrySearch Id="ContextMenuOffSearch" Root="HKCU" Key="Software\SpeechOut\Installer" Name="NoContextMenu" Type="raw" />
+    </Property>
+    <Property Id="APPCONTEXTMENU">
+      <RegistrySearch Id="AppContextMenuSearch" Root="HKCU" Key="Software\Classes\SystemFileAssociations\.pdf\shell\SpeechOut.ReadAloud\command" Type="raw" />
+    </Property>
+    <SetProperty Action="KeepNoContextMenu" Id="CONTEXTMENU" Value="0" After="AppSearch" Sequence="both"
+        Condition="NOT CONTEXTMENU AND CONTEXTMENUOFF" />
+    <SetProperty Action="AddContextMenu" Id="CONTEXTMENU" Value="1" After="KeepNoContextMenu" Sequence="both"
+        Condition="NOT CONTEXTMENU AND (CONTEXTMENUON OR APPCONTEXTMENU OR NOT WIX_UPGRADE_DETECTED)" />
+    <SetProperty Action="LeaveOutContextMenu" Id="CONTEXTMENU" Value="0" After="AddContextMenu" Sequence="both"
+        Condition="NOT CONTEXTMENU" />
+    <!-- The checkbox on the Right-click menu page is ticked when its property has any value. -->
+    <SetProperty Action="TickContextMenu" Id="ADDCONTEXTMENU" Value="1" After="LeaveOutContextMenu" Sequence="ui"
+        Condition="CONTEXTMENU = &quot;1&quot;" />
+
+    <StandardDirectory Id="LocalAppDataFolder">
+      <Directory Id="ProgramsFolder" Name="Programs">
+        <Directory Id="INSTALLFOLDER" Name="SpeechOut" />
+      </Directory>
+    </StandardDirectory>
+
+    <ComponentGroup Id="AppFiles" Directory="INSTALLFOLDER">
+      <Component Id="AppExe" Guid="65533A2B-6136-4310-B657-FA7517AD60CF">
+        <File Id="SpeechOutExe" Source="$(var.StageDir)\speechout.exe" KeyPath="no" />
+        <!-- A single Start menu shortcut, not in a folder. No desktop shortcut. -->
+        <Shortcut
+            Id="SpeechOutShortcut"
+            Directory="ProgramMenuFolder"
+            Name="Speech Output Engine"
+            Description="Speech Output Engine: an accessible text-to-speech reader for documents and images"
+            Target="[#SpeechOutExe]"
+            WorkingDirectory="INSTALLFOLDER" />
+        <!-- The installer's own key, removed with the app. The app's settings are not in it. -->
+        <RegistryKey Root="HKCU" Key="Software\SpeechOut\Installer" ForceDeleteOnUninstall="yes">
+          <RegistryValue Name="InstallFolder" Type="string" Value="[INSTALLFOLDER]" KeyPath="yes" />
+        </RegistryKey>
+        <!-- Each folder goes only if it is empty, so other apps' folders in Programs are safe. -->
+        <RemoveFolder Id="RemoveInstallFolder" Directory="INSTALLFOLDER" On="uninstall" />
+        <RemoveFolder Id="RemoveProgramsFolder" Directory="ProgramsFolder" On="uninstall" />
+        <!--
+          Clears away a right-click menu item added by the app itself before
+          version 2.8, so it goes if the user leaves the menu out. The
+          ContextMenu component writes the menu afterwards if it is wanted.
+        -->
+        <?foreach Ext in $(var.ContextMenuExtensions)?>
+        <RemoveRegistryKey Root="HKCU" Key="Software\Classes\SystemFileAssociations\.$(var.Ext)\shell\SpeechOut.ReadAloud" Action="removeOnInstall" />
+        <?endforeach?>
+      </Component>
+
+      <!--
+        "Read aloud" on the right-click menu in File Explorer, for each kind
+        of file the app reads. It runs speechout.exe with the read option and
+        the file, which reads it in the background. The label is in English; the app changes
+        it to the interface language when it starts. On Windows 11 the item is
+        under Show more options.
+
+        Both components are transitive, so their conditions are checked again
+        when Change in Installed apps reinstalls the app, and the menu is
+        added or removed to match. Each records the choice for upgrades.
+      -->
+      <Component Id="ContextMenu" Guid="489A841C-79C1-412F-8F84-C174A75AD765" Condition="CONTEXTMENU = &quot;1&quot;" Transitive="yes">
+        <?foreach Ext in $(var.ContextMenuExtensions)?>
+        <RegistryKey Root="HKCU" Key="Software\Classes\SystemFileAssociations\.$(var.Ext)\shell\SpeechOut.ReadAloud" ForceDeleteOnUninstall="yes">
+          <RegistryValue Name="MUIVerb" Type="string" Value="Read aloud with Speech Output Engine" />
+          <RegistryValue Key="command" Type="string" Value="&quot;[INSTALLFOLDER]speechout.exe&quot; --read &quot;%1&quot;" />
+        </RegistryKey>
+        <?endforeach?>
+        <RegistryValue Root="HKCU" Key="Software\SpeechOut\Installer" Name="ContextMenu" Type="integer" Value="1" KeyPath="yes" />
+      </Component>
+      <Component Id="NoContextMenu" Guid="BA3A9242-F14A-4070-9386-3564438AA67C" Condition="CONTEXTMENU &lt;&gt; &quot;1&quot;" Transitive="yes">
+        <RegistryValue Root="HKCU" Key="Software\SpeechOut\Installer" Name="NoContextMenu" Type="integer" Value="1" KeyPath="yes" />
+      </Component>
+
+      <!-- sherpa-onnx (speaker labelling), loaded from beside the exe. -->
+      <Component Id="SherpaOnnxCApi" Guid="830E28D9-BF89-4E4A-B0A7-C21686B76F9C">
+        <File Id="SherpaOnnxCApiDll" Source="$(var.StageDir)\sherpa-onnx-c-api.dll" KeyPath="no" />
+        <RegistryValue Root="HKCU" Key="Software\SpeechOut\Installer" Name="sherpa-onnx-c-api.dll" Type="integer" Value="1" KeyPath="yes" />
+      </Component>
+      <Component Id="OnnxRuntime" Guid="A2AF2BCB-DC6F-426A-85A0-CF5E2475F038">
+        <File Id="OnnxRuntimeDll" Source="$(var.StageDir)\onnxruntime.dll" KeyPath="no" />
+        <RegistryValue Root="HKCU" Key="Software\SpeechOut\Installer" Name="onnxruntime.dll" Type="integer" Value="1" KeyPath="yes" />
+      </Component>
+      <Component Id="OnnxRuntimeProvidersShared" Guid="C67D4C2A-875D-42F0-BC6C-9367108CC53F">
+        <File Id="OnnxRuntimeProvidersSharedDll" Source="$(var.StageDir)\onnxruntime_providers_shared.dll" KeyPath="no" />
+        <RegistryValue Root="HKCU" Key="Software\SpeechOut\Installer" Name="onnxruntime_providers_shared.dll" Type="integer" Value="1" KeyPath="yes" />
+      </Component>
+
+      <!--
+        The Visual C++ runtime, so the app runs without the Redistributable.
+        Which DLLs it needs can change between releases, so they share one
+        component. That is safe because an upgrade removes the old version
+        completely before installing the new one.
+      -->
+      <Component Id="VisualCppRuntime" Guid="C78AD107-3739-4CF0-AFC9-EF737318B163">
+        <?foreach Dll in $(var.RuntimeDlls)?>
+        <File Id="RuntimeDll_$(var.Dll)" Source="$(var.StageDir)\$(var.Dll)" KeyPath="no" />
+        <?endforeach?>
+        <RegistryValue Root="HKCU" Key="Software\SpeechOut\Installer" Name="VisualCppRuntime" Type="integer" Value="1" KeyPath="yes" />
+      </Component>
+    </ComponentGroup>
+
+    <Feature Id="SpeechOut" Title="SpeechOut" AllowAbsent="no" AllowAdvertise="no">
+      <ComponentGroupRef Id="AppFiles" />
+    </Feature>
+
+    <UIRef Id="SpeechOutUI" />
+  </Package>
+
+  <!--
+    The standard WixUI dialogs, in the order of WixUI_Minimal but with the
+    welcome page instead of the licence agreement, and a page of our own for
+    the right-click menu: Welcome, Right-click menu, Ready to install,
+    progress, Finished. Modify in Installed apps leads to Change, Repair or
+    Remove; Change shows the Right-click menu page again. They are ordinary
+    Windows Installer dialogs, so they work from the keyboard (Tab, Space,
+    Enter, Escape) and with screen readers. The GPL doesn't need to be
+    accepted to install or run the app, so it isn't shown as an agreement.
+  -->
+  <Fragment>
+    <UI Id="SpeechOutUI">
+      <TextStyle Id="WixUI_Font_Normal" FaceName="Tahoma" Size="8" />
+      <TextStyle Id="WixUI_Font_Bigger" FaceName="Tahoma" Size="12" />
+      <TextStyle Id="WixUI_Font_Title" FaceName="Tahoma" Size="9" Bold="yes" />
+      <Property Id="DefaultUIFont" Value="WixUI_Font_Normal" />
+
+      <DialogRef Id="CancelDlg" />
+      <DialogRef Id="ErrorDlg" />
+      <DialogRef Id="FatalError" />
+      <DialogRef Id="FilesInUse" />
+      <DialogRef Id="MsiRMFilesInUse" />
+      <DialogRef Id="PrepareDlg" />
+      <DialogRef Id="ProgressDlg" />
+      <DialogRef Id="ResumeDlg" />
+      <DialogRef Id="UserExit" />
+      <DialogRef Id="WelcomeDlg" />
+
+      <!--
+        The Right-click menu page, laid out like the standard WixUI pages. The
+        checkbox comes first, so it has the focus when the page opens and
+        screen readers read it straight away; Enter goes on to the next page.
+        Tab then goes through the buttons from left to right, as on the
+        standard pages.
+      -->
+      <Dialog Id="ContextMenuDlg" Width="370" Height="270" Title="!(loc.WelcomeDlg_Title)">
+        <Control Id="ContextMenuCheckBox" Type="CheckBox" X="20" Y="60" Width="330" Height="18" Property="ADDCONTEXTMENU" CheckBoxValue="1"
+            Text="&amp;Add &quot;Read aloud with Speech Output Engine&quot; to the right-click menu" />
+        <Control Id="Back" Type="PushButton" X="180" Y="243" Width="56" Height="17" Text="!(loc.WixUIBack)" />
+        <Control Id="Next" Type="PushButton" X="236" Y="243" Width="56" Height="17" Default="yes" Text="!(loc.WixUINext)" />
+        <Control Id="Cancel" Type="PushButton" X="304" Y="243" Width="56" Height="17" Cancel="yes" Text="!(loc.WixUICancel)">
+          <Publish Event="SpawnDialog" Value="CancelDlg" />
+        </Control>
+        <Control Id="Explanation" Type="Text" X="20" Y="84" Width="330" Height="80" NoPrefix="yes"
+            Text="When you right-click a document or image in File Explorer, Read aloud reads it in the background with the voice chosen in the app; choose it again to stop. PNG images, which are usually screenshots, are always read with the system voices. On Windows 11, it is under Show more options. You can change this later with Modify for Speech Output Engine in Installed apps." />
+        <Control Id="BannerBitmap" Type="Bitmap" X="0" Y="0" Width="370" Height="44" Text="!(loc.InstallDirDlgBannerBitmap)" />
+        <Control Id="BannerLine" Type="Line" X="0" Y="44" Width="370" Height="0" />
+        <Control Id="BottomLine" Type="Line" X="0" Y="234" Width="370" Height="0" />
+        <Control Id="Title" Type="Text" X="15" Y="6" Width="200" Height="15" Transparent="yes" NoPrefix="yes" Text="{\WixUI_Font_Title}Right-click menu" />
+        <Control Id="Description" Type="Text" X="25" Y="23" Width="280" Height="15" Transparent="yes" NoPrefix="yes" Text="Choose whether to add Read aloud to File Explorer." />
+      </Dialog>
+
+      <Publish Dialog="ExitDialog" Control="Finish" Event="EndDialog" Value="Return" Order="999" />
+
+      <Publish Dialog="WelcomeDlg" Control="Next" Event="NewDialog" Value="ContextMenuDlg" />
+
+      <Publish Dialog="ContextMenuDlg" Control="Back" Event="NewDialog" Value="WelcomeDlg" Order="1" Condition="NOT Installed" />
+      <Publish Dialog="ContextMenuDlg" Control="Back" Event="NewDialog" Value="MaintenanceTypeDlg" Order="2" Condition="Installed" />
+      <!-- The checkbox's property is empty when unticked, so turn it into 1 or 0. -->
+      <Publish Dialog="ContextMenuDlg" Control="Next" Property="CONTEXTMENU" Value="1" Order="1" Condition="NOT Installed AND ADDCONTEXTMENU" />
+      <Publish Dialog="ContextMenuDlg" Control="Next" Property="CONTEXTMENU" Value="0" Order="2" Condition="NOT Installed AND NOT ADDCONTEXTMENU" />
+      <Publish Dialog="ContextMenuDlg" Control="Next" Event="NewDialog" Value="VerifyReadyDlg" Order="3" />
+
+      <!--
+        For Change, the choice is only made, and the app reinstalled so the
+        menu's components are added or removed, when the Change button is
+        pressed. Doing it on the Right-click menu page would carry it into a
+        Repair or Remove chosen after going back from there. Order 0 comes
+        before the button's own EndDialog, which WixUI gives Order 1 and up.
+        The per-user package shows ChangeNoShield; Change is covered too.
+      -->
+      <?foreach ChangeButton in Change;ChangeNoShield?>
+      <Publish Dialog="VerifyReadyDlg" Control="$(var.ChangeButton)" Property="CONTEXTMENU" Value="1" Order="0" Condition="ADDCONTEXTMENU" />
+      <Publish Dialog="VerifyReadyDlg" Control="$(var.ChangeButton)" Property="CONTEXTMENU" Value="0" Order="0" Condition="NOT ADDCONTEXTMENU" />
+      <Publish Dialog="VerifyReadyDlg" Control="$(var.ChangeButton)" Event="ReinstallMode" Value="omus" Order="0" Condition="1" />
+      <Publish Dialog="VerifyReadyDlg" Control="$(var.ChangeButton)" Event="Reinstall" Value="All" Order="0" Condition="1" />
+      <?endforeach?>
+
+      <Publish Dialog="VerifyReadyDlg" Control="Back" Event="NewDialog" Value="ContextMenuDlg" Order="1" Condition="NOT Installed OR WixUI_InstallMode = &quot;Change&quot;" />
+      <Publish Dialog="VerifyReadyDlg" Control="Back" Event="NewDialog" Value="MaintenanceTypeDlg" Order="2" Condition="Installed AND WixUI_InstallMode &lt;&gt; &quot;Change&quot;" />
+
+      <Publish Dialog="MaintenanceWelcomeDlg" Control="Next" Event="NewDialog" Value="MaintenanceTypeDlg" />
+
+      <Publish Dialog="MaintenanceTypeDlg" Control="ChangeButton" Event="NewDialog" Value="ContextMenuDlg" />
+      <Publish Dialog="MaintenanceTypeDlg" Control="RepairButton" Event="NewDialog" Value="VerifyReadyDlg" />
+      <Publish Dialog="MaintenanceTypeDlg" Control="RemoveButton" Event="NewDialog" Value="VerifyReadyDlg" />
+      <Publish Dialog="MaintenanceTypeDlg" Control="Back" Event="NewDialog" Value="MaintenanceWelcomeDlg" />
+    </UI>
+
+    <UIRef Id="WixUI_Common" />
+  </Fragment>
+</Wix>

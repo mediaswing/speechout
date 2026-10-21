@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Example pronunciation wordlist for the Speech Output Engine.
+  Expands abbreviations and symbols that voices tend to spell out or skip.
+  Case-sensitive entries only change the exact capitalisation shown, so
+  "SQL" becomes "sequel" but the word "sql" in a file name is left alone.
+-->
+<wordlist name="Technology terms" description="Pronounces common computing abbreviations and symbols" language="en">
+  <entry match="SQL" replace="sequel" case-sensitive="true"/>
+  <entry match="GUI" replace="gooey" case-sensitive="true"/>
+  <entry match="JSON" replace="jason" case-sensitive="true"/>
+  <entry match="YAML" replace="yammel" case-sensitive="true"/>
+  <entry match="NVDA" replace="N V D A" case-sensitive="true"/>
+  <entry match="JAWS" replace="jaws" case-sensitive="true"/>
+  <entry match="WCAG" replace="W cag" case-sensitive="true"/>
+  <entry match="ARIA" replace="area" case-sensitive="true"/>
+  <entry match="a11y" replace="accessibility"/>
+  <entry match="i18n" replace="internationalisation"/>
+  <entry match="C#" replace="C sharp"/>
+  <entry match="F#" replace="F sharp"/>
+  <entry match="C++" replace="C plus plus"/>
+  <entry match=".NET" replace="dot net"/>
+  <entry match="Node.js" replace="Node J S"/>
+  <entry match="macOS" replace="mac O S"/>
+  <entry match="iOS" replace="eye O S"/>
+  <entry match="Wi-Fi" replace="wye fye"/>
+  <entry match="GIF" replace="jif" case-sensitive="true"/>
+  <entry match="PNG" replace="ping" case-sensitive="true"/>
+  <entry match="URL" replace="U R L" case-sensitive="true"/>
+  <entry match="sudo" replace="soo-doo"/>
+  <entry match="nginx" replace="engine X"/>
+  <entry match="Linux" replace="Linnux"/>
+  <entry match="Ubuntu" replace="oo-boon-too"/>
+  <entry match="GitHub" replace="git hub"/>
+  <entry match="e.g." replace="for example" whole-word="false"/>
+  <entry match="i.e." replace="that is" whole-word="false"/>
+  <entry match="etc." replace="et cetera" whole-word="false"/>
+</wordlist>
