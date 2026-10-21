@@ -3,7 +3,9 @@
 //! times, and long numbers. This runs just before speaking, so the text shown
 //! and copied is never changed.
 
+use crate::wordlist::{Installed, Substitutions};
 use regex::{Captures, Regex};
+use std::collections::BTreeSet;
 use std::sync::OnceLock;
 
 const MONTHS: [&str; 12] = [
@@ -30,6 +32,13 @@ fn patterns() -> &'static [Regex; 5] {
         ]
         .map(|p| Regex::new(p).expect("valid pattern"))
     })
+}
+
+/// Text as it is given to the voice: changed by the wordlists that are
+/// turned on, then with every rewrite applied. Reading in the window and with
+/// `--read` both prepare text here, so a file sounds the same either way.
+pub fn prepare(text: &str, wordlists: &[Installed], disabled: &BTreeSet<String>) -> String {
+    apply(&Substitutions::new(wordlists, disabled).apply(text))
 }
 
 /// The text with every rewrite applied.
@@ -156,6 +165,18 @@ fn group_digits(digits: &str, before: &str, after: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn wordlists_change_the_text_before_it_is_rewritten() {
+        let list = crate::wordlist::parse(
+            r#"<wordlist name="t"><entry match="help desk" replace="help@example.com"/></wordlist>"#,
+        )
+        .unwrap();
+        let installed = [Installed { file_name: "a.xml".into(), list: Ok(list) }];
+        assert_eq!(prepare("Ask the help desk.", &installed, &BTreeSet::new()), "Ask the help at example dot com.");
+        let turned_off = BTreeSet::from(["a.xml".to_owned()]);
+        assert_eq!(prepare("Ask the help desk.", &installed, &turned_off), "Ask the help desk.");
+    }
 
     #[test]
     fn email_addresses() {

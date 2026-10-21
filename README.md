@@ -528,7 +528,7 @@ compiled with clang-cl there, as the release workflow shows. The
 installer's `UpgradeCode` must never change, or new versions won't replace
 old ones. The installer also adds the right-click menu, for the kinds of file
 listed in its `ContextMenuExtensions`, which must match `EXTENSIONS` in
-`src/platform/context_menu.rs`; a test checks this on Windows. Ad hoc
+`src/document.rs`; a test checks this. Ad hoc
 signing lets the app run on Apple Silicon. On macOS, the `.pkg` is built with
 `pkgbuild` and `productbuild`, which come with macOS; the app bundle is also
 left in `dist/root` for trying it without installing.

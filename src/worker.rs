@@ -223,25 +223,8 @@ pub fn set_up_ollama(rep: Reporter, install: bool) {
 /// Downloads a model into Ollama, moving the progress bar and announcing each
 /// quarter. Escape stops it.
 pub fn download_model(rep: Reporter, control: Arc<Control>, model: String) {
-    rep.send(Msg::Progress(0.0));
-    let mut last_sent = -1.0;
-    let mut announced = 0;
-    let result = crate::vision::pull_model(
-        &model,
-        |fraction| {
-            // Half a percent is enough to move the bar; avoid flooding the UI.
-            if (fraction - last_sent).abs() >= 0.005 {
-                last_sent = fraction;
-                rep.send(Msg::Progress(fraction));
-            }
-            let quarter = (fraction * 4.0) as usize;
-            if quarter > announced && quarter < 4 {
-                announced = quarter;
-                rep.send(Msg::Status(tf("model.download_progress", &[("percent", &(quarter * 25))])));
-            }
-        },
-        || control.is_stopped(),
-    );
+    let mut quarters = Quarters::new(&rep, "model.download_progress");
+    let result = crate::vision::pull_model(&model, |f| quarters.report(&rep, f), || control.is_stopped());
     rep.send(Msg::ModelDownloaded(model, result.map_err(err)));
 }
 
@@ -752,37 +735,6 @@ pub fn play_video(
     rep.send(Msg::VideoPlayEnded(play, result.map_err(err)));
 }
 
-/// The time in the video, which stands still while it is paused.
-struct Clock {
-    from: Duration,
-    started: Instant,
-    paused_for: Duration,
-    paused_at: Option<Instant>,
-}
-
-impl Clock {
-    fn new(from: Duration, paused: bool) -> Self {
-        let now = Instant::now();
-        Self { from, started: now, paused_for: Duration::ZERO, paused_at: paused.then_some(now) }
-    }
-
-    fn now(&self) -> Duration {
-        let end = self.paused_at.unwrap_or_else(Instant::now);
-        self.from + end.duration_since(self.started).saturating_sub(self.paused_for)
-    }
-
-    fn set_paused(&mut self, paused: bool) {
-        match (paused, self.paused_at) {
-            (true, None) => self.paused_at = Some(Instant::now()),
-            (false, Some(at)) => {
-                self.paused_for += at.elapsed();
-                self.paused_at = None;
-            }
-            _ => {}
-        }
-    }
-}
-
 /// Sets a flag when dropped, however the function holding it returns.
 struct SetOnDrop(Arc<AtomicBool>);
 
@@ -840,7 +792,7 @@ fn play_video_from(
         std::thread::spawn(move || {
             let _done = SetOnDrop(done);
             let _ready = SetOnDrop(ready.clone());
-            feed_sound(&mut sound, &player, &ready, &finished);
+            crate::video::feed_sound(&mut sound, &player, &ready, &finished);
         });
     }
     // Set even when there is no sound, so Pause and Stop never reach the
@@ -884,7 +836,7 @@ fn play_video_from(
     // If the first picture never came in time, the next to arrive is still
     // the first, and is timed as such.
     let mut shown = u32::from(first.is_some());
-    let mut clock = Clock::new(from, control.is_paused());
+    let mut clock = crate::video::Clock::new(from, control.is_paused());
     control.set_paused(control.is_paused());
 
     let mut last_sent = from;
@@ -926,43 +878,6 @@ fn play_video_from(
             rep.send(Msg::VideoPlaying(play, now, None));
         }
         std::thread::sleep(Duration::from_millis(5));
-    }
-}
-
-/// Plays the sound ffmpeg writes, keeping about half a second queued so it
-/// plays smoothly and stops promptly. Sets `ready` once the first piece is
-/// queued, and returns when the sound ends or `finished` is set.
-fn feed_sound(sound: &mut crate::video::Running, player: &rodio::Player, ready: &AtomicBool, finished: &AtomicBool) {
-    use crate::video::PLAY_RATE;
-    use std::io::Read;
-    use std::num::NonZero;
-    let Some(mut output) = sound.output() else { return };
-    let channels = NonZero::new(2).expect("2 is not zero");
-    let rate = NonZero::new(PLAY_RATE).expect("the rate is not zero");
-    // A tenth of a second of stereo 32-bit samples.
-    let mut bytes = vec![0u8; PLAY_RATE as usize / 10 * 2 * 4];
-    loop {
-        let mut filled = 0;
-        while filled < bytes.len() {
-            match output.read(&mut bytes[filled..]) {
-                Ok(0) | Err(_) => break,
-                Ok(n) => filled += n,
-            }
-        }
-        // Whole stereo samples only.
-        filled -= filled % 8;
-        if filled == 0 || finished.load(Ordering::SeqCst) {
-            return;
-        }
-        let samples: Vec<f32> = bytes[..filled].as_chunks::<4>().0.iter().map(|b| f32::from_le_bytes(*b)).collect();
-        player.append(rodio::buffer::SamplesBuffer::new(channels, rate, samples));
-        ready.store(true, Ordering::SeqCst);
-        while player.len() > 5 {
-            if finished.load(Ordering::SeqCst) {
-                return;
-            }
-            std::thread::sleep(Duration::from_millis(10));
-        }
     }
 }
 

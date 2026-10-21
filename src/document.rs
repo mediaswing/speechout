@@ -36,23 +36,51 @@ pub enum FileKind {
     Image,
 }
 
+/// Every file name ending the app reads, and the kind of file it marks. The
+/// file dialog and the right-click menu on Windows offer these endings, and a
+/// test checks the installer's list matches, so a new kind of file is added
+/// here alone.
+const EXTENSIONS: [(&str, FileKind); 17] = [
+    ("pdf", FileKind::Pdf),
+    ("txt", FileKind::Text),
+    ("md", FileKind::Markdown),
+    ("markdown", FileKind::Markdown),
+    ("docx", FileKind::Docx),
+    ("odt", FileKind::Odt),
+    ("csv", FileKind::Csv),
+    ("ods", FileKind::Ods),
+    ("pptx", FileKind::Pptx),
+    ("ppt", FileKind::Ppt),
+    ("epub", FileKind::Epub),
+    ("jpg", FileKind::Image),
+    ("jpeg", FileKind::Image),
+    ("png", FileKind::Image),
+    ("jxl", FileKind::Image),
+    ("heic", FileKind::Image),
+    ("heif", FileKind::Image),
+];
+
 impl FileKind {
     pub fn from_path(path: &Path) -> Option<Self> {
         let ext = path.extension()?.to_str()?.to_ascii_lowercase();
-        match ext.as_str() {
-            "pdf" => Some(FileKind::Pdf),
-            "txt" | "text" => Some(FileKind::Text),
-            "md" | "markdown" => Some(FileKind::Markdown),
-            "docx" => Some(FileKind::Docx),
-            "odt" => Some(FileKind::Odt),
-            "csv" => Some(FileKind::Csv),
-            "ods" => Some(FileKind::Ods),
-            "pptx" => Some(FileKind::Pptx),
-            "ppt" => Some(FileKind::Ppt),
-            "epub" => Some(FileKind::Epub),
-            "jpg" | "jpeg" | "png" | "jxl" | "heic" | "heif" => Some(FileKind::Image),
-            _ => None,
+        // ".text" is read too, but not offered: it is rare, and the file
+        // dialog's list is long enough.
+        if ext == "text" {
+            return Some(FileKind::Text);
         }
+        EXTENSIONS.iter().find(|(e, _)| *e == ext).map(|(_, kind)| *kind)
+    }
+
+    /// The endings of the kinds of file `which` picks, such as
+    /// `FileKind::extensions(|k| k == FileKind::Image)` for images.
+    pub fn extensions(which: impl Fn(FileKind) -> bool) -> Vec<&'static str> {
+        EXTENSIONS.iter().filter(|(_, kind)| which(*kind)).map(|(e, _)| *e).collect()
+    }
+
+    /// Whether the Content or Format setting changes how this kind of file
+    /// is read.
+    pub fn reads_formatting(self) -> bool {
+        matches!(self, FileKind::Docx | FileKind::Odt | FileKind::Markdown | FileKind::Epub)
     }
 }
 
@@ -3300,7 +3328,43 @@ mod tests {
         assert_eq!(FileKind::from_path(Path::new("a.heic")), Some(FileKind::Image));
         assert_eq!(FileKind::from_path(Path::new("a.PNG")), Some(FileKind::Image));
         assert_eq!(FileKind::from_path(Path::new("a.jxl")), Some(FileKind::Image));
+        assert_eq!(FileKind::from_path(Path::new("a.text")), Some(FileKind::Text));
         assert_eq!(FileKind::from_path(Path::new("a.exe")), None);
+    }
+
+    #[test]
+    fn every_ending_offered_is_read_as_its_kind() {
+        for (ext, kind) in EXTENSIONS {
+            assert_eq!(FileKind::from_path(Path::new(&format!("a.{ext}"))), Some(kind), "{ext}");
+        }
+        let documents = FileKind::extensions(|k| k != FileKind::Image);
+        let images = FileKind::extensions(|k| k == FileKind::Image);
+        assert_eq!(documents.len() + images.len(), EXTENSIONS.len());
+        assert!(documents.contains(&"epub") && images.contains(&"heic"));
+    }
+
+    /// The ContextMenuExtensions list in the Windows installer's source.
+    fn installer_extensions(wxs: &str) -> Vec<&str> {
+        let list = wxs
+            .split("<?define ContextMenuExtensions = ")
+            .nth(1)
+            .and_then(|rest| rest.split("?>").next())
+            .expect("the installer has no ContextMenuExtensions list");
+        list.trim().split(';').collect()
+    }
+
+    /// Checked on every platform, so a change to the list shows up wherever
+    /// the tests are run, not only in the Windows build.
+    #[test]
+    fn the_installer_adds_the_menu_for_the_same_files() {
+        assert_eq!(installer_extensions(include_str!("installer/speechout.wxs")), FileKind::extensions(|_| true));
+    }
+
+    #[test]
+    fn formatting_setting_applies_to_documents_with_formatting() {
+        let formatted: Vec<_> =
+            EXTENSIONS.iter().filter(|(_, k)| k.reads_formatting()).map(|(e, _)| *e).collect();
+        assert_eq!(formatted, ["md", "markdown", "docx", "odt", "epub"]);
     }
 
     #[test]

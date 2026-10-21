@@ -14,7 +14,7 @@
 //! * A thick focus ring is drawn around whichever control has focus.
 
 use crate::audio::{AudioFormat, Cue, Listened, SoundKind};
-use crate::document::DocumentReading;
+use crate::document::{DocumentReading, FileKind};
 use crate::i18n::{self, Language, Translation, t, tf};
 use crate::playlist::Playlist;
 use crate::settings::Settings;
@@ -22,7 +22,7 @@ use crate::shortcuts::{self, Action, Command, KeyContext, Keymap, Platform, Shor
 use crate::speech::{self, Provider, Voice};
 use crate::speakers::SpeakerLabels;
 use crate::transcribe::WhisperModel;
-use crate::wordlist::{self, Installed, Substitutions};
+use crate::wordlist::{self, Installed};
 use crate::worker::{self, Control, Msg, Reporter, SpeechJob};
 use egui::accesskit::{Live, Role};
 use egui::{Button, Color32, EventFilter, Id, Key, Modifiers, RichText, Ui};
@@ -439,7 +439,7 @@ impl SpeechApp {
     /// choice itself is kept for the next file.
     fn active_provider(&self) -> Provider {
         let p = self.settings.provider;
-        if !self.system_voices_only() && self.available_providers().contains(&p) { p } else { Provider::System }
+        p.or_system(self.api_keys.contains_key(&p), self.system_voices_only())
     }
 
     /// Whether the loaded file, such as a PNG screenshot, must be read with
@@ -824,9 +824,9 @@ impl SpeechApp {
         }
         let Some(path) = rfd::FileDialog::new()
             .set_title(t("file.dialog_title"))
-            .add_filter(t("file.filter_all"), &["pdf", "txt", "md", "markdown", "docx", "odt", "csv", "ods", "pptx", "ppt", "epub", "jpg", "jpeg", "png", "jxl", "heic", "heif"])
-            .add_filter(t("file.filter_documents"), &["pdf", "txt", "md", "markdown", "docx", "odt", "csv", "ods", "pptx", "ppt", "epub"])
-            .add_filter(t("file.filter_photos"), &["jpg", "jpeg", "png", "jxl", "heic", "heif"])
+            .add_filter(t("file.filter_all"), &FileKind::extensions(|_| true))
+            .add_filter(t("file.filter_documents"), &FileKind::extensions(|k| k != FileKind::Image))
+            .add_filter(t("file.filter_photos"), &FileKind::extensions(|k| k == FileKind::Image))
             .pick_file()
         else {
             return;
@@ -972,9 +972,8 @@ impl SpeechApp {
     /// such files are read shows straight away. While the app is busy, the change
     /// waits until the file is next opened.
     fn reread_document(&mut self) {
-        use crate::document::FileKind;
         let Some(path) = self.file.clone().filter(|_| self.source == Source::File) else { return };
-        if !matches!(FileKind::from_path(&path), Some(FileKind::Docx | FileKind::Odt | FileKind::Markdown | FileKind::Epub)) {
+        if !FileKind::from_path(&path).is_some_and(FileKind::reads_formatting) {
             return;
         }
         if self.loading_file || self.is_busy() {
@@ -999,8 +998,7 @@ impl SpeechApp {
             self.announce(msg);
             return None;
         }
-        let subs = Substitutions::new(&self.wordlists, &self.settings.disabled_wordlists);
-        let text = crate::spoken::apply(&subs.apply(self.current_text()));
+        let text = crate::spoken::prepare(self.current_text(), &self.wordlists, &self.settings.disabled_wordlists);
         self.job_for(text)
     }
 

@@ -41,6 +41,14 @@ impl Provider {
         }
     }
 
+    /// The service speech is made with when this one is chosen: this one,
+    /// unless it needs an API key and `has_key` says none is saved, or the
+    /// text must be read with the system voices, as a PNG screenshot's
+    /// description must. The window and `--read` both choose this way.
+    pub fn or_system(self, has_key: bool, system_voices_only: bool) -> Provider {
+        if system_voices_only || (self.key_name().is_some() && !has_key) { Provider::System } else { self }
+    }
+
     /// Name of the stored API key, or `None` for providers that need no key.
     pub fn key_name(self) -> Option<&'static str> {
         match self {
@@ -282,6 +290,14 @@ fn split_text(text: &str, max_chars: usize) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn chosen_service_falls_back_to_system_voices() {
+        assert_eq!(Provider::ElevenLabs.or_system(true, false), Provider::ElevenLabs);
+        assert_eq!(Provider::ElevenLabs.or_system(false, false), Provider::System);
+        assert_eq!(Provider::OpenAi.or_system(true, true), Provider::System);
+        assert_eq!(Provider::System.or_system(false, false), Provider::System);
+    }
 
     #[test]
     fn splits_at_sentences() {

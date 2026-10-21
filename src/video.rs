@@ -2,6 +2,9 @@
 //! video is built from; the frames between them only record what changed),
 //! and each is then described by the local AI model, as a photo is.
 //!
+//! A video is also played there while its description is edited, with ffmpeg
+//! writing its pictures and sound as it goes.
+//!
 //! ffmpeg is not part of the app. It is found where the usual package
 //! managers put it, and runs on this computer, so the video never leaves it.
 
@@ -10,7 +13,8 @@ use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdout, Command, Stdio};
 use std::sync::mpsc::RecvTimeoutError;
-use std::time::Duration;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::time::{Duration, Instant};
 
 /// Keyframes closer together than this are skipped. Some videos have one
 /// every half second, and pictures that close are nearly the same.
@@ -286,9 +290,90 @@ pub fn join_descriptions(described: &[(Duration, String)]) -> String {
         .join("\n\n")
 }
 
+/// The time in the video, which stands still while it is paused.
+pub struct Clock {
+    from: Duration,
+    started: Instant,
+    paused_for: Duration,
+    paused_at: Option<Instant>,
+}
+
+impl Clock {
+    pub fn new(from: Duration, paused: bool) -> Self {
+        let now = Instant::now();
+        Self { from, started: now, paused_for: Duration::ZERO, paused_at: paused.then_some(now) }
+    }
+
+    pub fn now(&self) -> Duration {
+        let end = self.paused_at.unwrap_or_else(Instant::now);
+        self.from + end.duration_since(self.started).saturating_sub(self.paused_for)
+    }
+
+    pub fn set_paused(&mut self, paused: bool) {
+        match (paused, self.paused_at) {
+            (true, None) => self.paused_at = Some(Instant::now()),
+            (false, Some(at)) => {
+                self.paused_for += at.elapsed();
+                self.paused_at = None;
+            }
+            _ => {}
+        }
+    }
+}
+
+/// Plays the sound ffmpeg writes, keeping about half a second queued so it
+/// plays smoothly and stops promptly. Sets `ready` once the first piece is
+/// queued, and returns when the sound ends or `finished` is set.
+pub fn feed_sound(sound: &mut Running, player: &rodio::Player, ready: &AtomicBool, finished: &AtomicBool) {
+    use std::io::Read;
+    use std::num::NonZero;
+    let Some(mut output) = sound.output() else { return };
+    let channels = NonZero::new(2).expect("2 is not zero");
+    let rate = NonZero::new(PLAY_RATE).expect("the rate is not zero");
+    // A tenth of a second of stereo 32-bit samples.
+    let mut bytes = vec![0u8; PLAY_RATE as usize / 10 * 2 * 4];
+    loop {
+        let mut filled = 0;
+        while filled < bytes.len() {
+            match output.read(&mut bytes[filled..]) {
+                Ok(0) | Err(_) => break,
+                Ok(n) => filled += n,
+            }
+        }
+        // Whole stereo samples only.
+        filled -= filled % 8;
+        if filled == 0 || finished.load(Ordering::SeqCst) {
+            return;
+        }
+        let samples: Vec<f32> = bytes[..filled].as_chunks::<4>().0.iter().map(|b| f32::from_le_bytes(*b)).collect();
+        player.append(rodio::buffer::SamplesBuffer::new(channels, rate, samples));
+        ready.store(true, Ordering::SeqCst);
+        while player.len() > 5 {
+            if finished.load(Ordering::SeqCst) {
+                return;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_clock_stands_still_while_paused() {
+        let mut clock = Clock::new(Duration::from_secs(5), true);
+        std::thread::sleep(Duration::from_millis(20));
+        assert_eq!(clock.now(), Duration::from_secs(5));
+        clock.set_paused(false);
+        std::thread::sleep(Duration::from_millis(20));
+        clock.set_paused(true);
+        let paused_at = clock.now();
+        assert!(paused_at >= Duration::from_millis(5020), "{paused_at:?}");
+        std::thread::sleep(Duration::from_millis(20));
+        assert_eq!(clock.now(), paused_at);
+    }
 
     #[test]
     fn reads_the_duration() {

@@ -22,8 +22,11 @@ use winreg::enums::{HKEY_CURRENT_USER, KEY_READ, KEY_SET_VALUE};
 const VERB: &str = "SpeechOut.ReadAloud";
 
 /// The kinds of file the app reads, as in the file dialog on the General tab.
-/// The installer's ContextMenuExtensions list must match.
-const EXTENSIONS: [&str; 17] = ["pdf", "txt", "md", "markdown", "docx", "odt", "csv", "ods", "pptx", "ppt", "epub", "jpg", "jpeg", "png", "jxl", "heic", "heif"];
+/// The installer's ContextMenuExtensions list must match, which a test in
+/// `document` checks.
+fn extensions() -> Vec<&'static str> {
+    crate::document::FileKind::extensions(|_| true)
+}
 
 /// The menu item's key for files ending in `.ext`, under HKEY_CURRENT_USER.
 fn verb_key(ext: &str) -> String {
@@ -31,7 +34,7 @@ fn verb_key(ext: &str) -> String {
 }
 
 pub fn is_installed() -> bool {
-    RegKey::predef(HKEY_CURRENT_USER).open_subkey(verb_key(EXTENSIONS[0])).is_ok()
+    RegKey::predef(HKEY_CURRENT_USER).open_subkey(verb_key(extensions()[0])).is_ok()
 }
 
 /// Whether the Windows Installer has installed the app for this user, and so
@@ -44,7 +47,7 @@ pub fn managed_by_installer() -> bool {
 /// Removes a menu item the installer doesn't manage.
 pub fn remove() -> anyhow::Result<()> {
     let hkcu = RegKey::predef(HKEY_CURRENT_USER);
-    for ext in EXTENSIONS {
+    for ext in extensions() {
         match hkcu.delete_subkey_all(verb_key(ext)) {
             Err(e) if e.kind() != std::io::ErrorKind::NotFound => {
                 return Err(anyhow::Error::new(e).context("could not remove Read aloud from the right-click menu"));
@@ -63,7 +66,7 @@ pub fn refresh() {
     let label = t("context_menu.verb");
     let hkcu = RegKey::predef(HKEY_CURRENT_USER);
     let mut changed = false;
-    for ext in EXTENSIONS {
+    for ext in extensions() {
         let Ok(key) = hkcu.open_subkey_with_flags(verb_key(ext), KEY_READ | KEY_SET_VALUE) else { continue };
         if key.get_value::<String, _>("MUIVerb").is_ok_and(|v| v == label) {
             continue;
@@ -84,32 +87,4 @@ fn associations_changed() {
     use windows::Win32::UI::Shell::{SHCNE_ASSOCCHANGED, SHCNF_IDLIST, SHChangeNotify};
     // SAFETY: SHCNE_ASSOCCHANGED takes no items.
     unsafe { SHChangeNotify(SHCNE_ASSOCCHANGED, SHCNF_IDLIST, None, None) };
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn covers_the_files_the_app_reads() {
-        for ext in EXTENSIONS {
-            let path = std::path::PathBuf::from(format!("a.{ext}"));
-            assert!(crate::document::FileKind::from_path(&path).is_some(), "{ext}");
-        }
-    }
-
-    /// The ContextMenuExtensions list in the installer's source.
-    fn installer_extensions(wxs: &str) -> Vec<&str> {
-        let list = wxs
-            .split("<?define ContextMenuExtensions = ")
-            .nth(1)
-            .and_then(|rest| rest.split("?>").next())
-            .expect("the installer has no ContextMenuExtensions list");
-        list.trim().split(';').collect()
-    }
-
-    #[test]
-    fn the_installer_adds_the_menu_for_the_same_files() {
-        assert_eq!(installer_extensions(include_str!("../installer/speechout.wxs")), EXTENSIONS);
-    }
 }

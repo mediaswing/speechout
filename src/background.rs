@@ -11,7 +11,7 @@
 use crate::i18n::{self, t, tf};
 use crate::settings::Settings;
 use crate::speech::{self, Provider};
-use crate::wordlist::{self, Substitutions};
+use crate::wordlist;
 use crate::worker::{self, Control, Msg, Reporter, SpeechJob};
 use std::path::Path;
 use std::process::ExitCode;
@@ -71,8 +71,7 @@ fn read(settings: &Settings, path: &Path, name: &str, control: Arc<Control>) -> 
         return fail(tf("background.nothing", &[("name", &name)]));
     }
     let wordlists = wordlist::list_installed(&crate::paths::wordlist_dir());
-    let subs = Substitutions::new(&wordlists, &settings.disabled_wordlists);
-    let text = crate::spoken::apply(&subs.apply(&text));
+    let text = crate::spoken::prepare(&text, &wordlists, &settings.disabled_wordlists);
     let job = match job_for(settings, system_voices_only, text) {
         Ok(job) => job,
         Err(e) => return fail(tf("background.failed", &[("name", &name), ("error", &e)])),
@@ -102,11 +101,9 @@ fn read(settings: &Settings, path: &Path, name: &str, control: Arc<Control>) -> 
 /// `system_voices_only` is for a file, such as a PNG screenshot, that must not
 /// be read with a cloud voice.
 fn job_for(settings: &Settings, system_voices_only: bool, text: String) -> Result<SpeechJob, String> {
-    let saved = if system_voices_only { Provider::System } else { settings.provider };
-    let key = saved.key_name().and_then(crate::secrets::get);
-    // Without its API key, a cloud service can't be used; the window falls
-    // back to the system voices too.
-    let provider = if saved.key_name().is_some() && key.is_none() { Provider::System } else { saved };
+    // A key is only looked up for a file a cloud voice may read.
+    let key = settings.provider.key_name().filter(|_| !system_voices_only).and_then(crate::secrets::get);
+    let provider = settings.provider.or_system(key.is_some(), system_voices_only);
     let voice = match settings.voice_for(provider) {
         Some(voice) => voice.to_owned(),
         None if provider == Provider::System => String::new(),

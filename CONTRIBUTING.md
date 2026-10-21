@@ -92,7 +92,9 @@ The one exception is the Windows installer: WiX Toolset builds it from
 `src/installer/speechout.wxs` in the release workflow, from the files the workflow
 stages. If you change which files the Windows app needs, update both. It also
 adds the right-click menu, so a new kind of file the app reads goes in its
-`ContextMenuExtensions` list as well as in `src/platform/context_menu.rs`.
+`ContextMenuExtensions` list as well as in `EXTENSIONS` in `src/document.rs`,
+which the file dialog and the right-click menu both use. A test checks the
+two lists match.
 
 ### 5. Plain language
 
