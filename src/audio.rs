@@ -157,6 +157,14 @@ fn encode_mp3(pcm: &Pcm) -> anyhow::Result<Vec<u8>> {
     }
     out.reserve(7200);
     encoder.flush_to_vec::<FlushNoGap>(&mut out).map_err(|e| lame_err(&e))?;
+    // LAME starts the audio with an empty frame, to be filled in once the
+    // whole recording is encoded with its Info header: how long it is, and
+    // the silence the encoder added at each end. Without it, players have to
+    // guess the length from the file size.
+    let mut info = Vec::with_capacity(encoder.lame_tag_size());
+    if encoder.lame_tag_encode_to_vec(&mut info).is_some() && info.len() <= out.len() {
+        out[..info.len()].copy_from_slice(&info);
+    }
     Ok(out)
 }
 
@@ -559,6 +567,22 @@ mod tests {
         let bytes = encode_mp3(&tone()).unwrap();
         let back = decode(bytes).unwrap();
         assert!(back.samples.len() > 20_000);
+    }
+
+    #[test]
+    fn mp3_has_an_info_header_with_its_length() {
+        let pcm = tone();
+        let bytes = encode_mp3(&pcm).unwrap();
+        // A constant bit rate file's header says "Info"; it sits in the first
+        // frame, after the frame header and side information.
+        let at = bytes[..200].windows(4).position(|w| w == b"Info").expect("an Info header");
+        let flags = u32::from_be_bytes(bytes[at + 4..at + 8].try_into().unwrap());
+        assert_ne!(flags & 1, 0, "the header gives the number of frames");
+        let frames = u32::from_be_bytes(bytes[at + 8..at + 12].try_into().unwrap()) as usize;
+        // MPEG-2 layer III frames hold 576 samples each.
+        let expected = pcm.samples.len().div_ceil(576);
+        assert!(frames.abs_diff(expected) <= 3, "{frames} frames for {expected} frames of audio");
+        assert!(bytes.windows(4).any(|w| w == b"LAME"));
     }
 
     /// The text frames of an ID3v2.3 tag, as (frame ID, text).
