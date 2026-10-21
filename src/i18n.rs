@@ -91,7 +91,7 @@ const ENGLISH: &[(&str, &str)] = &[
     ("file.filter_all", "Documents and photos"),
     ("file.filter_documents", "Documents"),
     ("file.filter_photos", "Photos"),
-    ("file.unsupported", "That type of file is not supported. Choose a PDF, TXT, Markdown, DOCX, ODT, CSV, ODS, PPTX, PPT, JPEG, PNG, JPEG XL or HEIC file."),
+    ("file.unsupported", "That type of file is not supported. Choose a PDF, TXT, Markdown, DOCX, ODT, CSV, ODS, PPTX, PPT, EPUB, JPEG, PNG, JPEG XL or HEIC file."),
     ("file.model_downloading", "The AI model is still downloading. Choose the photo again when it has finished."),
     ("file.looking_for_model", "Looking for the local AI model to describe {name}."),
     ("file.describing", "Describing {name}. This can take a minute."),
@@ -279,14 +279,14 @@ const ENGLISH: &[(&str, &str)] = &[
     ("settings.parts", "Long texts (read in parts of up to {count} characters)"),
     ("settings.parts_run_on", "Run the parts on with no announcement"),
     ("settings.parts_announce", "Say \"This is part 1 of 3\" at the start of each part"),
-    ("settings.reading", "Word, OpenDocument and Markdown files (DOCX, ODT and MD)"),
+    ("settings.reading", "Word, OpenDocument, Markdown and EPUB files (DOCX, ODT, MD and EPUB)"),
     ("settings.reading_content", "Content: read the text only"),
     (
         "settings.reading_format",
         "Format: read the text and say how it is formatted (headings, lists, tables, bold, italic, underlining, \
          colour, crossed-out text and links)",
     ),
-    ("settings.reading_next_time", "The change will apply the next time you open a Word, OpenDocument or Markdown file."),
+    ("settings.reading_next_time", "The change will apply the next time you open a Word, OpenDocument, Markdown or EPUB file."),
     ("settings.sounds", "Sounds"),
     ("settings.sounds_on", "Play a sound when something succeeds or fails"),
     ("settings.sounds_off", "Do not play sounds"),
@@ -1000,7 +1000,7 @@ fn prompt(language: &Language, batch: &BTreeMap<&str, &str>) -> String {
          - Keep every name in curly braces, such as {{name}} or {{count}}, exactly as it is. Do not translate it.\n\
          - Keep these unchanged: key names such as Ctrl, Cmd, Esc, Escape, Tab, F5, F6 and F7; product names such as \
            Ollama, ElevenLabs, OpenAI, Deepgram, Speechify, OpenStreetMap and GitHub; and file types such as PDF, \
-           TXT, MD, DOCX, ODT, CSV, ODS, PPTX, PPT, JPEG, PNG, JPEG XL, HEIC, XML, MP3 and WAV.\n\
+           TXT, MD, DOCX, ODT, CSV, ODS, PPTX, PPT, EPUB, JPEG, PNG, JPEG XL, HEIC, XML, MP3 and WAV.\n\
          - Keep line breaks, quotation marks and the … character where the English has them.\n\
          - Use plain, everyday words, and the form of address usual for software in that language.\n\
          - Translate every value, even short ones.\n\n\

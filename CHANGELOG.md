@@ -1,5 +1,11 @@
 # Changelog
 
+## [Unreleased]
+
+### Added
+
+- EPUB books can now be read aloud. A book starts with its title and authors, such as "The City of the Blind, by Murray Leinster.", then each chapter is read in turn, in the order the book is meant to be read, and the Content and Format settings for Word, OpenDocument and Markdown files apply to EPUB books too, so Format says headings, lists, tables, quotations, bold, italic and links. Pictures are read from their descriptions (alt text), such as "Image: A man with a lantern.", after the paragraph they're in; pictures with no description, or marked as decoration, are passed over. Footnotes, the numbers that refer to them and printed page numbers are left out. Books with copy protection (DRM) can't be read, and say so.
+
 ## [3.3.0] - 2026-10-21
 
 ### Added

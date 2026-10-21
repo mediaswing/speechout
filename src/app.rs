@@ -824,8 +824,8 @@ impl SpeechApp {
         }
         let Some(path) = rfd::FileDialog::new()
             .set_title(t("file.dialog_title"))
-            .add_filter(t("file.filter_all"), &["pdf", "txt", "md", "markdown", "docx", "odt", "csv", "ods", "pptx", "ppt", "jpg", "jpeg", "png", "jxl", "heic", "heif"])
-            .add_filter(t("file.filter_documents"), &["pdf", "txt", "md", "markdown", "docx", "odt", "csv", "ods", "pptx", "ppt"])
+            .add_filter(t("file.filter_all"), &["pdf", "txt", "md", "markdown", "docx", "odt", "csv", "ods", "pptx", "ppt", "epub", "jpg", "jpeg", "png", "jxl", "heic", "heif"])
+            .add_filter(t("file.filter_documents"), &["pdf", "txt", "md", "markdown", "docx", "odt", "csv", "ods", "pptx", "ppt", "epub"])
             .add_filter(t("file.filter_photos"), &["jpg", "jpeg", "png", "jxl", "heic", "heif"])
             .pick_file()
         else {
@@ -968,13 +968,13 @@ impl SpeechApp {
         self.rep.spawn(move |rep| worker::load_file(rep, path, model, resolve, camera, reading));
     }
 
-    /// Opens the loaded DOCX, ODT or Markdown file again, so a change to how
+    /// Opens the loaded DOCX, ODT, Markdown or EPUB file again, so a change to how
     /// such files are read shows straight away. While the app is busy, the change
     /// waits until the file is next opened.
     fn reread_document(&mut self) {
         use crate::document::FileKind;
         let Some(path) = self.file.clone().filter(|_| self.source == Source::File) else { return };
-        if !matches!(FileKind::from_path(&path), Some(FileKind::Docx | FileKind::Odt | FileKind::Markdown)) {
+        if !matches!(FileKind::from_path(&path), Some(FileKind::Docx | FileKind::Odt | FileKind::Markdown | FileKind::Epub)) {
             return;
         }
         if self.loading_file || self.is_busy() {

@@ -34,7 +34,7 @@
     The kinds of file the right-click menu is for. They must match EXTENSIONS
     in src/platform/context_menu.rs, which a test there checks.
   -->
-  <?define ContextMenuExtensions = pdf;txt;md;markdown;docx;odt;csv;ods;pptx;ppt;jpg;jpeg;png;jxl;heic;heif ?>
+  <?define ContextMenuExtensions = pdf;txt;md;markdown;docx;odt;csv;ods;pptx;ppt;epub;jpg;jpeg;png;jxl;heic;heif ?>
 
   <!--
     Never change the UpgradeCode: it is how a new version finds and replaces

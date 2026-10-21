@@ -23,7 +23,7 @@ const VERB: &str = "SpeechOut.ReadAloud";
 
 /// The kinds of file the app reads, as in the file dialog on the General tab.
 /// The installer's ContextMenuExtensions list must match.
-const EXTENSIONS: [&str; 16] = ["pdf", "txt", "md", "markdown", "docx", "odt", "csv", "ods", "pptx", "ppt", "jpg", "jpeg", "png", "jxl", "heic", "heif"];
+const EXTENSIONS: [&str; 17] = ["pdf", "txt", "md", "markdown", "docx", "odt", "csv", "ods", "pptx", "ppt", "epub", "jpg", "jpeg", "png", "jxl", "heic", "heif"];
 
 /// The menu item's key for files ending in `.ext`, under HKEY_CURRENT_USER.
 fn verb_key(ext: &str) -> String {
