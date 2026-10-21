@@ -37,8 +37,29 @@ env:
   GGML_NATIVE: "OFF"
 
 jobs:
+  # The MSI's version comes from the tag, but the app's own version (shown by
+  # --version, compared with GitHub's latest release when checking for
+  # updates, and used to name the .deb and .pkg) comes from Cargo.toml. If
+  # they differed, every installed copy would keep saying an update is
+  # available, so check they match before anything is built.
+  version:
+    name: Check the tag matches Cargo.toml
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - run: |
+          set -euo pipefail
+          tag="${GITHUB_REF_NAME#v}"
+          cargo=$(awk -F'"' '/^\[/ { section = $0 } section == "[package]" && /^version *=/ { print $2; exit }' Cargo.toml)
+          if [ "$tag" != "$cargo" ]; then
+            echo "::error::The tag $GITHUB_REF_NAME doesn't match version \"$cargo\" in Cargo.toml. Set the version in Cargo.toml to $tag (and update Cargo.lock), or tag v$cargo instead."
+            exit 1
+          fi
+          echo "Version: $cargo"
+
   windows:
     name: Windows (${{ matrix.arch }})
+    needs: version
     runs-on: ${{ matrix.runner }}
     strategy:
       # Let both builds finish, so a failure in one doesn't hide the other's.
@@ -352,6 +373,7 @@ jobs:
 
   linux:
     name: Ubuntu .deb (amd64)
+    needs: version
     # The oldest supported Ubuntu LTS, so the package installs on 22.04 and later.
     runs-on: ubuntu-22.04
     steps:
@@ -383,6 +405,7 @@ jobs:
 
   macos:
     name: macOS .pkg (Apple Silicon)
+    needs: version
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v7.0.1
