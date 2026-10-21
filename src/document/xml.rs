@@ -50,17 +50,23 @@ pub(super) fn attr(e: &quick_xml::events::BytesStart, name: &str) -> Option<Stri
 /// Appends the character an entity or character reference stands for. Only
 /// the five predefined XML entities are expanded, so there is no XXE risk.
 pub(super) fn push_ref(out: &mut String, r: &quick_xml::events::BytesRef) {
+    push_entity(out, r, quick_xml::escape::resolve_xml_entity);
+}
+
+/// As `push_ref`, but with HTML's named entities too, such as `&nbsp;`,
+/// which older EPUB books use.
+pub(super) fn push_html_ref(out: &mut String, r: &quick_xml::events::BytesRef) {
+    push_entity(out, r, quick_xml::escape::resolve_html5_entity);
+}
+
+/// Appends what a character reference, or an entity named in `entities`,
+/// stands for. Nothing is read from a document's own DTD, and an entity
+/// `entities` doesn't name is left out.
+fn push_entity(out: &mut String, r: &quick_xml::events::BytesRef, entities: fn(&str) -> Option<&'static str>) {
     if let Ok(Some(c)) = r.resolve_char_ref() {
         out.push(c);
-    } else {
-        match r.as_ref() {
-            "amp" => out.push('&'),
-            "lt" => out.push('<'),
-            "gt" => out.push('>'),
-            "quot" => out.push('"'),
-            "apos" => out.push('\''),
-            _ => {}
-        }
+    } else if let Some(s) = entities(r.as_ref()) {
+        out.push_str(s);
     }
 }
 
@@ -94,6 +100,28 @@ pub(super) fn resolve_part(base: &str, target: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use quick_xml::events::Event;
+
+    /// The text of `xml`, with entities expanded by `push`.
+    fn expanded(xml: &str, push: fn(&mut String, &quick_xml::events::BytesRef)) -> String {
+        let mut reader = quick_xml::Reader::from_str(xml);
+        let mut out = String::new();
+        loop {
+            match reader.read_event().unwrap() {
+                Event::Text(t) => out.push_str(&t.xml10_content()),
+                Event::GeneralRef(r) => push(&mut out, &r),
+                Event::Eof => return out,
+                _ => {}
+            }
+        }
+    }
+
+    #[test]
+    fn office_documents_expand_xml_entities_and_epub_html_ones_too() {
+        let xml = "<t>Fish &amp; chips&nbsp;&#233;t&#xE9;</t>";
+        assert_eq!(expanded(xml, push_ref), "Fish & chipsété");
+        assert_eq!(expanded(xml, push_html_ref), "Fish & chips\u{a0}été");
+    }
 
     #[test]
     fn pptx_part_names() {

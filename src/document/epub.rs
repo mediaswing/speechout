@@ -6,7 +6,7 @@ use std::collections::HashMap;
 use std::path::Path;
 use super::DocumentReading;
 use super::narration::{BOLD, ITALIC, Marks, NarratedParagraph, Narration, STRIKE, UNDERLINE, list_item_words, with_stop};
-use super::xml::{MAX_XML_BYTES, attr, open_zip, prefixed_attr, read_zip_entry, resolve_part};
+use super::xml::{MAX_XML_BYTES, attr, open_zip, prefixed_attr, push_html_ref, read_zip_entry, resolve_part};
 
 /// Reads an EPUB book: each XHTML document in its spine, the order it is
 /// meant to be read in. Parts marked as not in the main reading order, such
@@ -14,8 +14,16 @@ use super::xml::{MAX_XML_BYTES, attr, open_zip, prefixed_attr, read_zip_entry, r
 pub(super) fn read_epub(path: &Path, reading: DocumentReading) -> anyhow::Result<String> {
     let mut archive = open_zip(path, "EPUB")?;
     let mut budget = MAX_XML_BYTES;
+    // The container names the package document, which lists the book's parts.
+    const NO_CONTENTS: &str = "this EPUB file has no list of its contents";
+    if archive.index_for_name("META-INF/container.xml").is_none() {
+        bail!(NO_CONTENTS);
+    }
     let container = read_zip_entry(&mut archive, "META-INF/container.xml", "EPUB", &mut budget)?;
-    let package_name = epub_package_name(&container)?.context("this EPUB file has no list of its contents")?;
+    let package_name = epub_package_name(&container)?.context(NO_CONTENTS)?;
+    if archive.index_for_name(&package_name).is_none() {
+        bail!(NO_CONTENTS);
+    }
     let package = read_zip_entry(&mut archive, &package_name, "EPUB", &mut budget)?;
     let folder = package_name.rsplit_once('/').map_or("", |(folder, _)| folder);
     let parts: Vec<String> =
@@ -251,17 +259,6 @@ fn xhtml_skipped(e: &quick_xml::events::BytesStart) -> bool {
             .iter()
             .flatten()
             .any(|types| types.split_whitespace().any(|t| EPUB_SKIPPED_TYPES.contains(&t)))
-}
-
-/// Appends the character an entity or character reference stands for, as
-/// `push_ref` does, but with HTML's named entities, such as `&nbsp;`, which
-/// older EPUB books use. Nothing is read from the document's own DTD.
-fn push_html_ref(out: &mut String, r: &quick_xml::events::BytesRef) {
-    if let Ok(Some(c)) = r.resolve_char_ref() {
-        out.push(c);
-    } else if let Some(s) = quick_xml::escape::resolve_html5_entity(r.as_ref()) {
-        out.push_str(s);
-    }
 }
 
 /// Pulls the text out of an XHTML document from an EPUB book, one paragraph
@@ -633,6 +630,23 @@ mod tests {
         );
         let error = extract_text(file.path(), DocumentReading::Content).unwrap_err();
         assert!(error.to_string().contains("copy protected"), "{error}");
+    }
+
+    #[test]
+    fn epub_without_a_list_of_contents_says_so() {
+        use std::io::Write;
+        for parts in [&[][..], &[("META-INF/container.xml", r#"<container><rootfile full-path="gone.opf"/></container>"#)][..]] {
+            let file = tempfile::Builder::new().suffix(".epub").tempfile().unwrap();
+            let mut zip = zip::ZipWriter::new(file.reopen().unwrap());
+            zip.start_file("mimetype", zip::write::SimpleFileOptions::default()).unwrap();
+            for (name, xml) in parts {
+                zip.start_file(*name, zip::write::SimpleFileOptions::default()).unwrap();
+                zip.write_all(xml.as_bytes()).unwrap();
+            }
+            zip.finish().unwrap();
+            let error = extract_text(file.path(), DocumentReading::Content).unwrap_err();
+            assert!(error.to_string().contains("has no list of its contents"), "{error}");
+        }
     }
 
     #[test]

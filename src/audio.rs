@@ -173,7 +173,7 @@ fn encode_mp3(pcm: &Pcm) -> anyhow::Result<Vec<u8>> {
 /// Explorer, Apple Music and other players all read; LAME's own tag writer
 /// would only take Latin-1, losing names such as "Café" or "日本語".
 fn id3_tag(tags: &Tags) -> Vec<u8> {
-    let software = format!("{} {}", crate::app::APP_TITLE, env!("CARGO_PKG_VERSION"));
+    let software = format!("{} {}", crate::APP_TITLE, env!("CARGO_PKG_VERSION"));
     let fields = [(b"TIT2", &tags.title), (b"TPE1", &tags.artist), (b"TALB", &tags.album), (b"TSSE", &software)];
     let mut frames = Vec::new();
     for (id, text) in fields {

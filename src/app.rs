@@ -13,6 +13,7 @@
 //!   dropdown, and the shortcuts below work from anywhere.
 //! * A thick focus ring is drawn around whichever control has focus.
 
+use crate::APP_TITLE;
 use crate::audio::{AudioFormat, Cue, Listened, SoundKind};
 use crate::document::{DocumentReading, FileKind};
 use crate::i18n::{self, Language, Translation, t, tf};
@@ -31,8 +32,6 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::mpsc::{Receiver, channel};
 use std::time::Duration;
-
-pub const APP_TITLE: &str = "Speech Output Engine";
 
 const CONTROL_HEIGHT: f32 = 36.0;
 

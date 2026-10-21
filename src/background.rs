@@ -132,7 +132,7 @@ fn confirm_sending(job: &SpeechJob, name: &str) -> bool {
     let key = if count == 1 { "usage.up_to.one" } else { "usage.up_to.other" };
     let usage = tf(key, &[("count", &speech::format_count(count)), ("service", &job.provider.short_name())]);
     rfd::MessageDialog::new()
-        .set_title(crate::app::APP_TITLE)
+        .set_title(crate::APP_TITLE)
         .set_description(tf("background.confirm_cloud", &[("name", &name), ("usage", &usage)]))
         .set_buttons(rfd::MessageButtons::YesNo)
         .set_level(rfd::MessageLevel::Info)
@@ -143,7 +143,7 @@ fn confirm_sending(job: &SpeechJob, name: &str) -> bool {
 fn fail(message: String) -> ExitCode {
     log::warn!("reading in the background failed: {message}");
     rfd::MessageDialog::new()
-        .set_title(crate::app::APP_TITLE)
+        .set_title(crate::APP_TITLE)
         .set_description(message)
         .set_buttons(rfd::MessageButtons::Ok)
         .set_level(rfd::MessageLevel::Error)

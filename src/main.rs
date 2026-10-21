@@ -28,6 +28,9 @@ mod worker;
 
 use std::process::ExitCode;
 
+/// The app's name, as its windows, dialogs and saved files give it.
+const APP_TITLE: &str = "Speech Output Engine";
+
 const USAGE: &str = "Speech Output Engine
 
 Usage:
@@ -97,7 +100,7 @@ fn run_gui() -> ExitCode {
 
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
-            .with_title(app::APP_TITLE)
+            .with_title(APP_TITLE)
             .with_app_id("speechout")
             .with_inner_size([640.0, 820.0])
             .with_min_inner_size([360.0, 480.0])
@@ -108,7 +111,7 @@ fn run_gui() -> ExitCode {
         ..Default::default()
     };
     let result = eframe::run_native(
-        app::APP_TITLE,
+        APP_TITLE,
         options,
         Box::new(move |cc| Ok(Box::new(app::SpeechApp::new(cc, settings, log_status)))),
     );
