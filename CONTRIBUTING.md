@@ -50,7 +50,7 @@ feature must work for them from the start, not be added later.
   README.
 - **Everything is exposed to screen readers.** Each control has a visible label
   that's linked to it, headings are marked as headings, and the status line is
-  a polite live region. Use the helpers in `src/app.rs`, such as the labelled
+  a polite live region. Use the helpers in `src/app/widgets.rs`, such as the labelled
   dropdown and the heading widget, rather than plain egui widgets.
 - **The layout stays simple.** Each control is on its own full-width line, in a
   sensible reading order. The focus ring must stay thick and clearly visible in

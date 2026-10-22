@@ -556,7 +556,8 @@ and a table of scan links is added to the release notes. This needs a repository
 
 ```
 src/main.rs           Command line and start-up
-src/app.rs            The window, tabs and keyboard handling
+src/app/              The window: one file per tab, keyboard shortcuts, and the
+                      controls the tabs are built from (widgets.rs)
 src/worker.rs         Background jobs (speaking, saving, loading)
 src/speech/           System and cloud voices
 src/audio.rs          Decoding, playback, WAV and MP3 export, and the speech check

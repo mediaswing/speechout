@@ -1076,8 +1076,17 @@ mod tests {
         assert_eq!(english_map().len(), ENGLISH.len(), "a key appears twice in ENGLISH");
     }
 
-    const SOURCES: [&str; 8] = [
-        include_str!("app.rs"),
+    const SOURCES: [&str; 17] = [
+        include_str!("app/mod.rs"),
+        include_str!("app/general_tab.rs"),
+        include_str!("app/keys.rs"),
+        include_str!("app/labels.rs"),
+        include_str!("app/models.rs"),
+        include_str!("app/player_tab.rs"),
+        include_str!("app/settings_tab.rs"),
+        include_str!("app/video_tab.rs"),
+        include_str!("app/widgets.rs"),
+        include_str!("app/wordlists_tab.rs"),
         include_str!("background.rs"),
         include_str!("platform/context_menu.rs"),
         include_str!("worker.rs"),
