@@ -112,6 +112,17 @@ impl SpeechApp {
         }
     }
 
+    /// Makes `used`, the model that just described a photo, the one chosen,
+    /// if the one chosen couldn't be used. Returns what to tell the user.
+    pub(super) fn switch_vision_model(&mut self, used: String) -> Option<String> {
+        if used == self.settings.vision_model {
+            return None;
+        }
+        let failed = std::mem::replace(&mut self.settings.vision_model, used);
+        self.settings.save();
+        Some(tf("model.switched", &[("failed", &failed), ("model", &self.settings.vision_model)]))
+    }
+
     /// Ollama should be checked first: no model is chosen, Ollama was not
     /// running at the last check, or it has no model for photos. Then the
     /// user is offered a fix instead of a failed description.

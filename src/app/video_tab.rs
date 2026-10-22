@@ -193,6 +193,7 @@ impl SpeechApp {
             Ok(None) => self.announce(t("video.stopped")),
             Ok(Some(done)) => {
                 let words = done.text.split_whitespace().count();
+                let switched = self.switch_vision_model(done.model);
                 self.video.text = done.text;
                 // Known before the first play, so Forward can't go past the end.
                 self.video.length = done.length;
@@ -208,7 +209,11 @@ impl SpeechApp {
                     self.edit_video_text();
                 } else {
                     let key = if done.frames == 1 { "video.done_one" } else { "video.done" };
-                    self.announce(tf(key, &[("name", &name), ("count", &done.frames), ("words", &words)]));
+                    let done = tf(key, &[("name", &name), ("count", &done.frames), ("words", &words)]);
+                    self.announce(match switched {
+                        Some(note) => format!("{done} {note}"),
+                        None => done,
+                    });
                 }
             }
             Err(e) => self.show_error(tf("video.failed", &[("error", &e)])),

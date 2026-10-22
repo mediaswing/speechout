@@ -252,6 +252,9 @@ pub struct LoadedFile {
     /// Whether the text must be read with the system voices, as for a PNG
     /// screenshot. Worked out from what the file held, not just its name.
     pub system_voices_only: bool,
+    /// The model that described a photo, which is another one if the one
+    /// chosen couldn't be used.
+    pub vision_model: Option<String>,
 }
 
 /// The text of a document, or the description of a photo. `reading` says
@@ -268,8 +271,10 @@ pub fn read_file(
         Some(FileKind::Image) => crate::vision::describe(path, model, resolve_location, read_camera).map(|d| LoadedFile {
             text: d.text,
             system_voices_only: d.was_png || crate::document::system_voices_only(path),
+            vision_model: Some(d.model),
         }),
-        _ => crate::document::extract_text(path, reading).map(|text| LoadedFile { text, system_voices_only: false }),
+        _ => crate::document::extract_text(path, reading)
+            .map(|text| LoadedFile { text, system_voices_only: false, vision_model: None }),
     });
     result.map_err(err)
 }
@@ -651,6 +656,9 @@ pub struct VideoDescription {
     pub frames: usize,
     /// How long the video is, if ffmpeg could tell.
     pub length: Option<Duration>,
+    /// The model that described the pictures, which is another one if the
+    /// one chosen couldn't be used.
+    pub model: String,
 }
 
 /// Share of the progress bar that taking out the pictures takes. Describing
@@ -662,7 +670,7 @@ const PREVIEW_EDGE: u32 = 800;
 /// Takes the keyframes out of a video into `dir` with ffmpeg, then describes
 /// each with the image description model `model`. Escape stops it, between
 /// pictures once they are being described.
-pub fn describe_video(rep: Reporter, control: Arc<Control>, ffmpeg: PathBuf, video: PathBuf, dir: PathBuf, model: String) {
+pub fn describe_video(rep: Reporter, control: Arc<Control>, ffmpeg: PathBuf, video: PathBuf, dir: PathBuf, mut model: String) {
     let result = contain(|| {
         let mut quarters = Quarters::new(&rep, "video.progress");
         let keyframes = crate::video::keyframes(
@@ -688,10 +696,12 @@ pub fn describe_video(rep: Reporter, control: Arc<Control>, ffmpeg: PathBuf, vid
                 .ok();
             rep.send(Msg::VideoFrame(VideoFrame { video: video.clone(), number: i + 1, count, time: frame.time, image }));
             let description = crate::vision::describe(&frame.path, &model, false, false)?;
+            // The rest go straight to a model that works.
+            model = description.model;
             described.push((frame.time, description.text));
             quarters.report(&rep, KEYFRAMES_SHARE + (i + 1) as f32 / count as f32 * (1.0 - KEYFRAMES_SHARE));
         }
-        Ok(Some(VideoDescription { text: crate::video::join_descriptions(&described), frames: count, length }))
+        Ok(Some(VideoDescription { text: crate::video::join_descriptions(&described), frames: count, length, model }))
     });
     rep.send(Msg::VideoDescribed(video, result.map_err(err)));
 }

@@ -105,6 +105,7 @@ const ENGLISH: &[(&str, &str)] = &[
     ("models.looking", "Looking for local AI models."),
     ("model.size", "about {size}"),
     ("model.downloaded", "Downloaded {model}. You can now describe photos."),
+    ("model.switched", "The model {failed} could not be used, so {model} was used, and will be from now on."),
     (
         "model.download_stopped",
         "Stopped downloading the AI model. What was downloaded is kept, so the next download carries on from there.",

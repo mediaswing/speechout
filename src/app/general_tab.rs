@@ -119,6 +119,9 @@ impl SpeechApp {
                 self.file = Some(path);
                 self.source = Source::File;
                 let mut message = tf("file.loaded", &[("name", &name), ("count", &words)]);
+                if let Some(note) = loaded.vision_model.and_then(|m| self.switch_vision_model(m)) {
+                    message = format!("{message} {note}");
+                }
                 // Say so when this file changes the service from the one chosen,
                 // not when it couldn't be used anyway, such as without its API key.
                 let chosen = self.settings.provider;

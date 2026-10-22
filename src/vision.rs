@@ -214,6 +214,48 @@ pub struct Description {
     pub text: String,
     /// Whether the file held a PNG image, whatever its name.
     pub was_png: bool,
+    /// The model that described it: another vision model if the one asked
+    /// for couldn't be used.
+    pub model: String,
+}
+
+/// Ollama has the model but couldn't use it: it can't load it, say, or
+/// runs out of memory. Another model may well work.
+#[derive(Debug)]
+struct ModelFailed {
+    model: String,
+    error: String,
+}
+
+impl std::fmt::Display for ModelFailed {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        write!(f, "Ollama could not use the model {}: {}", self.model, self.error)
+    }
+}
+
+impl std::error::Error for ModelFailed {}
+
+/// The model answered, but said nothing. Another model may do better.
+#[derive(Debug)]
+struct EmptyDescription;
+
+impl std::fmt::Display for EmptyDescription {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        f.write_str("the model returned an empty description. Try a vision model such as llama3.2-vision, gemma3 or llava.")
+    }
+}
+
+impl std::error::Error for EmptyDescription {}
+
+/// Whether another model is worth trying after this error. Others, such as
+/// Ollama not running, would only happen again.
+fn worth_another_model(e: &anyhow::Error) -> bool {
+    e.is::<ModelFailed>() || e.is::<EmptyDescription>()
+}
+
+/// The vision models to try, in order, after `failed` couldn't be used.
+fn fallback_models(models: &[String], failed: &str) -> Vec<String> {
+    models.iter().filter(|m| *m != failed && is_vision_model(m)).cloned().collect()
 }
 
 pub fn describe(path: &Path, model: &str, resolve_location: bool, read_camera: bool) -> anyhow::Result<Description> {
@@ -222,30 +264,23 @@ pub fn describe(path: &Path, model: &str, resolve_location: bool, read_camera: b
     }
     let Prepared { jpeg, was_png } = prepare_image(path)?;
     let b64 = base64::engine::general_purpose::STANDARD.encode(jpeg);
-    log::info!("describing image with model {model}");
-    // Ollama explains a failure, such as a model it can't load, in the reply.
-    let body: Value = crate::ollama::agent()
-        .post(&format!("{}/api/generate", crate::ollama::OLLAMA_URL))
-        .config()
-        .http_status_as_error(false)
-        .build()
-        .send_json(json!({
-            "model": model,
-            "prompt": PROMPT,
-            "images": [b64],
-            "stream": false,
-        }))
-        .context("the local AI model could not describe the image. Check that Ollama is running and that the model supports images.")?
-        .body_mut()
-        .read_json()
-        .context("Ollama sent an unexpected reply")?;
-    if let Some(error) = body["error"].as_str() {
-        bail!("Ollama could not use the model {model}: {error}");
-    }
-    let mut description = plain_text(body["response"].as_str().unwrap_or_default());
-    if description.is_empty() {
-        bail!("the model returned an empty description. Try a vision model such as llama3.2-vision, gemma3 or llava.");
-    }
+    let (mut description, model) = match ask(model, &b64) {
+        Err(e) if worth_another_model(&e) => {
+            log::warn!("{e:#}");
+            // If Ollama can't list its models now, this first error is the one reported.
+            let models = crate::ollama::list_models().unwrap_or_default();
+            let mut described = Err(e);
+            for other in fallback_models(&models, model) {
+                described = ask(&other, &b64).map(|text| (text, other));
+                match &described {
+                    Err(e) if worth_another_model(e) => log::warn!("{e:#}"),
+                    _ => break,
+                }
+            }
+            described?
+        }
+        described => (described?, model.to_owned()),
+    };
 
     if resolve_location {
         match gps_coordinates(path) {
@@ -267,7 +302,36 @@ pub fn describe(path: &Path, model: &str, resolve_location: bool, read_camera: b
             Err(e) => log::warn!("could not read image camera: {e:#}"),
         }
     }
-    Ok(Description { text: description, was_png })
+    Ok(Description { text: description, was_png, model })
+}
+
+/// Asks `model` to describe the image `b64`, a base64-encoded JPEG.
+fn ask(model: &str, b64: &str) -> anyhow::Result<String> {
+    log::info!("describing image with model {model}");
+    // Ollama explains a failure, such as a model it can't load, in the reply.
+    let body: Value = crate::ollama::agent()
+        .post(&format!("{}/api/generate", crate::ollama::OLLAMA_URL))
+        .config()
+        .http_status_as_error(false)
+        .build()
+        .send_json(json!({
+            "model": model,
+            "prompt": PROMPT,
+            "images": [b64],
+            "stream": false,
+        }))
+        .context("the local AI model could not describe the image. Check that Ollama is running and that the model supports images.")?
+        .body_mut()
+        .read_json()
+        .context("Ollama sent an unexpected reply")?;
+    if let Some(error) = body["error"].as_str() {
+        return Err(ModelFailed { model: model.to_owned(), error: error.to_owned() }.into());
+    }
+    let description = plain_text(body["response"].as_str().unwrap_or_default());
+    if description.is_empty() {
+        return Err(EmptyDescription.into());
+    }
+    Ok(description)
 }
 
 /// The signature box that starts a JPEG XL file in the container format,
@@ -470,6 +534,21 @@ mod tests {
         assert_eq!(preferred_model(&models).unwrap(), "llama3.2-vision:11b");
         assert_eq!(preferred_model(&models[..1]).unwrap(), "llama3.1:8b");
         assert!(preferred_model(&[]).is_none());
+    }
+
+    #[test]
+    fn falls_back_to_other_vision_models() {
+        let models: Vec<String> =
+            ["llama3.2-vision:latest", "wizardlm-uncensored:latest", "qwen2.5vl:3b", "moondream:latest"]
+                .map(String::from)
+                .into();
+        assert_eq!(fallback_models(&models, "llama3.2-vision:latest"), ["qwen2.5vl:3b", "moondream:latest"]);
+        // A model that isn't for images was chosen: try all those that are.
+        assert_eq!(
+            fallback_models(&models, "wizardlm-uncensored:latest"),
+            ["llama3.2-vision:latest", "qwen2.5vl:3b", "moondream:latest"]
+        );
+        assert!(fallback_models(&models[..2], "llama3.2-vision:latest").is_empty());
     }
 
     #[test]
