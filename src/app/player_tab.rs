@@ -582,7 +582,8 @@ impl SpeechApp {
                 SoundKind::Other => t("player.kind_other"),
                 SoundKind::Silent => t("player.kind_silent"),
             };
-            let summary = tf("player.summary", &[("length", &spoken_duration(audio.duration)), ("sound", &sound)]);
+            let remaining = spoken_duration(audio.duration.saturating_sub(self.player.position));
+            let summary = tf("player.summary", &[("remaining", &remaining), ("sound", &sound)]);
             ui.label(&summary);
             waveform(ui, &audio.waveform, self.audio_fraction(), &tf("player.waveform", &[("summary", &summary)]));
         }

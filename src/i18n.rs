@@ -419,7 +419,7 @@ const ENGLISH: &[(&str, &str)] = &[
          \"{button}\" to try anyway.{play_hint}",
     ),
     ("player.silent", "It seems to be silent."),
-    ("player.summary", "Length: {length}. Sounds like: {sound}."),
+    ("player.summary", "Time remaining: {remaining}. Sounds like: {sound}."),
     ("player.kind_speech", "speech"),
     ("player.kind_other", "music or other sounds"),
     ("player.kind_silent", "silence"),
