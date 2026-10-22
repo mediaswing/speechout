@@ -51,12 +51,11 @@ jobs:
     steps:
       - uses: actions/checkout@v7.0.1
       - uses: dtolnay/rust-toolchain@stable
-      # As in release.yml, sherpa-onnx-sys's downloaded libraries are cached
-      # with the build.
+      # The prefix keeps these caches apart from the release workflow's, so
+      # what CI saves can never change how a release is built.
       - uses: Swatinem/rust-cache@v2.9.2
         with:
-          prefix-key: v1-rust
-          cache-directories: target/sherpa-onnx-prebuilt
+          prefix-key: v1-rust-ci
       - uses: actions/cache@v6.1.0
         with:
           path: vcpkg-cache
@@ -84,4 +83,16 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           'CMAKE_GENERATOR=Ninja', 'CMAKE_C_COMPILER=clang-cl', 'CMAKE_CXX_COMPILER=clang-cl', 'CMAKE_CXX_FLAGS=-nologo /EHsc',
             'GGML_CPU_ARM_ARCH=armv8.2-a+fp16+dotprod' >> $env:GITHUB_ENV
+      # sherpa-onnx-sys downloads its libraries into target\sherpa-onnx-prebuilt,
+      # but rust-cache deletes every file in that folder before saving, keeping
+      # only its empty folders. A cached build then finds the folders, doesn't
+      # download again, and can't link sherpa-onnx-c-api.lib. Removing the
+      # folder and that one package's build makes its build script fetch the
+      # libraries afresh; everything else stays cached.
+      - name: Fetch sherpa-onnx's libraries again
+        shell: pwsh
+        run: |
+          Remove-Item -Recurse -Force target\sherpa-onnx-prebuilt -ErrorAction SilentlyContinue
+          cargo clean --locked -p sherpa-onnx-sys
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - run: cargo test --locked --features bundled-heif
