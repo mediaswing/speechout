@@ -5,16 +5,17 @@
 use super::*;
 
 /// A photo or video chosen before the programs that describe it were found
-/// or set up, to describe once they are.
+/// or set up, to describe once they are, or a WMA file waiting for ffmpeg.
 pub(super) enum Waiting {
     Photo(PathBuf),
     Video(PathBuf),
+    Audio(PathBuf),
 }
 
 impl Waiting {
-    fn path(&self) -> &std::path::Path {
+    pub(super) fn path(&self) -> &std::path::Path {
         match self {
-            Waiting::Photo(p) | Waiting::Video(p) => p,
+            Waiting::Photo(p) | Waiting::Video(p) | Waiting::Audio(p) => p,
         }
     }
 }
@@ -152,6 +153,7 @@ impl SpeechApp {
         match waiting {
             Waiting::Photo(path) => self.open_file(path, true),
             Waiting::Video(path) => self.describe_video(path, String::new()),
+            Waiting::Audio(path) => self.open_audio(path, String::new()),
         }
     }
 

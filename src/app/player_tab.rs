@@ -118,11 +118,29 @@ impl SpeechApp {
         }
         let Some(path) = rfd::FileDialog::new()
             .set_title(t("player.dialog_title"))
-            .add_filter(t("player.filter"), &["wav", "mp3", "zip"])
+            .add_filter(t("player.filter"), &["wav", "mp3", "wma", "zip"])
             .pick_file()
         else {
             return;
         };
+        self.open_audio(path, String::new());
+    }
+
+    /// Opens an audio file or a zip file of them, first offering to install
+    /// ffmpeg for a WMA file if it is missing. `intro` is said first.
+    pub(super) fn open_audio(&mut self, path: PathBuf, intro: String) {
+        if self.player.loader.is_some() {
+            return;
+        }
+        if self.setting_up_ffmpeg {
+            return self.announce(t("progress.setting_up_ffmpeg"));
+        }
+        if crate::audio::needs_ffmpeg(&path) && crate::platform::ffmpeg().is_none() {
+            if !intro.is_empty() {
+                self.announce(intro);
+            }
+            return self.offer_ffmpeg(Waiting::Audio(path));
+        }
         if let Some(control) = &self.player.control {
             control.stop();
         }
@@ -131,10 +149,10 @@ impl SpeechApp {
         self.player.play_when_loaded = false;
         let name = file_name(&path);
         if crate::playlist::is_zip(&path) {
-            self.announce(tf("playlist.unpacking", &[("name", &name)]));
+            self.announce(format!("{intro} {}", tf("playlist.unpacking", &[("name", &name)])).trim().to_owned());
             self.rep.spawn(move |rep| worker::open_playlist(rep, control, path));
         } else {
-            self.announce(tf("player.opening", &[("name", &name)]));
+            self.announce(format!("{intro} {}", tf("player.opening", &[("name", &name)])).trim().to_owned());
             self.rep.spawn(move |rep| worker::load_audio(rep, control, path));
         }
     }
@@ -159,7 +177,7 @@ impl SpeechApp {
             n => intro = format!("{intro} {}", tf("playlist.missing", &[("count", &n)])),
         }
         if !list.missing.is_empty() {
-            log::warn!("listing.txt names files that are not WAV or MP3 files in the zip: {:?}", list.missing);
+            log::warn!("listing.txt names files that are not WAV, MP3 or WMA files in the zip: {:?}", list.missing);
         }
         self.player.audio = None;
         self.player.position = Duration::ZERO;
@@ -316,12 +334,12 @@ impl SpeechApp {
             self.player.position
         };
         self.cues.stop();
-        let path = path.clone();
+        let (path, audio) = (path.clone(), audio.clone());
         let control = Arc::new(Control::default());
         self.player.control = Some(control.clone());
         self.player.paused = false;
         self.player.position = start;
-        self.rep.spawn(move |rep| worker::play_audio(rep, control, path, start));
+        self.rep.spawn(move |rep| worker::play_audio(rep, control, path, audio, start));
         true
     }
 

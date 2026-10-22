@@ -1,6 +1,6 @@
 //! Zip files of audio, played as playlists on the Audio Player tab.
 //!
-//! The WAV and MP3 files in the zip are unpacked to a temporary folder and
+//! The WAV, MP3 and WMA files in the zip are unpacked to a temporary folder and
 //! played one after another. If the zip has a `listing.txt` file, it sets the
 //! order: one file name to a line. Otherwise the files play in name order,
 //! with numbers in names counted properly, so "2.mp3" comes before "10.mp3".
@@ -29,7 +29,7 @@ const MAX_TRACKS: usize = 10_000;
 pub struct Playlist {
     /// The tracks in playing order, unpacked into `_dir`.
     pub tracks: Vec<PathBuf>,
-    /// Lines in the listing that don't name a WAV or MP3 file in the zip.
+    /// Lines in the listing that don't name a WAV, MP3 or WMA file in the zip.
     pub missing: Vec<String>,
     /// Deleted, with the tracks in it, when the playlist is dropped.
     _dir: tempfile::TempDir,
@@ -41,7 +41,7 @@ pub fn is_zip(path: &Path) -> bool {
 
 fn is_audio(name: &str) -> bool {
     let lower = name.to_lowercase();
-    lower.ends_with(".wav") || lower.ends_with(".mp3")
+    lower.ends_with(".wav") || lower.ends_with(".mp3") || lower.ends_with(".wma")
 }
 
 /// Unpacks the audio in the zip file at `path`, in playing order. Returns
@@ -73,7 +73,7 @@ pub fn open(path: &Path, stopped: impl Fn() -> bool) -> anyhow::Result<Option<Pl
         }
     }
     if audio.is_empty() {
-        bail!("there are no WAV or MP3 files in it");
+        bail!("there are no WAV, MP3 or WMA files in it");
     }
 
     let listing = match listing {

@@ -499,12 +499,14 @@ pub fn open_playlist(rep: Reporter, control: Arc<Control>, path: PathBuf) {
 }
 
 /// Plays an audio file from `start`, reporting the position as it goes.
-/// The control pauses, moves and stops it.
-pub fn play_audio(rep: Reporter, control: Arc<Control>, path: PathBuf, start: Duration) {
+/// The control pauses, moves and stops it. Holding `audio` keeps the WAV
+/// that ffmpeg made from a WMA file until playing it has stopped.
+pub fn play_audio(rep: Reporter, control: Arc<Control>, path: PathBuf, audio: Arc<audio::Listened>, start: Duration) {
     use anyhow::Context;
     let result = contain(|| {
         let playback = Playback::open()?;
-        let file = std::fs::File::open(&path).with_context(|| format!("could not open {}", path.display()))?;
+        let playable = audio.playable(&path);
+        let file = std::fs::File::open(playable).with_context(|| format!("could not open {}", path.display()))?;
         let decoder = rodio::Decoder::try_from(file).context("the audio could not be decoded")?;
         let player = playback.handle();
         player.append(decoder);

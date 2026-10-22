@@ -44,6 +44,7 @@ impl SpeechApp {
         match result {
             Ok(_) => match waiting {
                 Some(Waiting::Video(path)) => self.describe_video(path, t("ffmpeg.installed")),
+                Some(Waiting::Audio(path)) => self.open_audio(path, t("ffmpeg.installed")),
                 _ => self.announce(t("ffmpeg.installed")),
             },
             Err(e) => self.show_error(tf("ffmpeg.setup_failed", &[("error", &e)])),
@@ -128,7 +129,7 @@ impl SpeechApp {
             if !intro.is_empty() {
                 self.announce(intro);
             }
-            return self.offer_ffmpeg(path);
+            return self.offer_ffmpeg(Waiting::Video(path));
         };
         if self.needs_model_check() {
             return self.wait_for_model(Waiting::Video(path));
@@ -149,8 +150,12 @@ impl SpeechApp {
     }
 
     /// ffmpeg isn't installed. Offers to install it with the package
-    /// manager, or to open its download page, then describes the video.
-    fn offer_ffmpeg(&mut self, path: PathBuf) {
+    /// manager, or to open its download page, then describes the video or
+    /// opens the audio file that is `waiting`.
+    pub(super) fn offer_ffmpeg(&mut self, waiting: Waiting) {
+        let audio = matches!(waiting, Waiting::Audio(_));
+        let key = |video: &'static str, audio_key: &'static str| if audio { audio_key } else { video };
+        let name = file_name(waiting.path());
         let manager = crate::platform::ffmpeg_package_manager();
         let mut question = match manager {
             Some(manager) => tf("ffmpeg.install_question", &[("manager", &manager)]),
@@ -161,25 +166,25 @@ impl SpeechApp {
         }
         let yes = rfd::MessageDialog::new()
             .set_title(t("ffmpeg.install_title"))
-            .set_description(format!("{}\n\n{question}", t("ffmpeg.intro")))
+            .set_description(format!("{}\n\n{question}", t(key("ffmpeg.intro", "ffmpeg.intro_audio"))))
             .set_buttons(rfd::MessageButtons::YesNo)
             .set_level(rfd::MessageLevel::Info)
             .show()
             == rfd::MessageDialogResult::Yes;
         if !yes {
-            self.announce(tf("ffmpeg.declined", &[("name", &file_name(&path))]));
+            self.announce(tf(key("ffmpeg.declined", "ffmpeg.declined_audio"), &[("name", &name)]));
             return;
         }
         let Some(manager) = manager else {
             const DOWNLOAD_PAGE: &str = "https://ffmpeg.org/download.html";
             match crate::platform::open_url(DOWNLOAD_PAGE) {
-                Ok(()) => self.announce(t("ffmpeg.page_opened")),
+                Ok(()) => self.announce(t(key("ffmpeg.page_opened", "ffmpeg.page_opened_audio"))),
                 Err(e) => self.show_error(tf("ffmpeg.page_failed", &[("error", &e), ("url", &DOWNLOAD_PAGE)])),
             }
             return;
         };
         self.setting_up_ffmpeg = true;
-        self.waiting = Some(Waiting::Video(path));
+        self.waiting = Some(waiting);
         self.announce(tf("ffmpeg.installing", &[("manager", &manager)]));
         self.rep.spawn(worker::install_ffmpeg);
     }

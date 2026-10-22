@@ -192,6 +192,53 @@ pub fn keyframes(
     Ok(Some(Keyframes { frames, length: duration }))
 }
 
+// ----- audio the app can't decode itself ---------------------------------
+
+/// Decodes an audio file the app can't decode itself, such as WMA, into a
+/// temporary WAV file, deleted when the path is dropped. Keeps its sample
+/// rate and channels, so it plays as it would have. Returns `None` if
+/// `stopped` said to stop.
+pub fn decode_audio(ffmpeg: &Path, audio: &Path, stopped: impl Fn() -> bool) -> anyhow::Result<Option<tempfile::TempPath>> {
+    let wav = tempfile::Builder::new()
+        .prefix("speechout-audio-")
+        .suffix(".wav")
+        .tempfile()
+        .context("could not make a temporary file for the audio")?
+        .into_temp_path();
+    let mut child = ffmpeg_command(ffmpeg)
+        .args(["-nostats", "-loglevel", "error", "-y", "-i"])
+        .arg(audio)
+        .args(["-vn", "-sn", "-dn", "-c:a", "pcm_s16le", "-f", "wav"])
+        .arg(&wav)
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .spawn()
+        .context("could not run ffmpeg")?;
+    // Read on a thread of its own, so it doesn't fill up and stop ffmpeg.
+    let stderr = child.stderr.take().context("could not run ffmpeg")?;
+    let log = std::thread::spawn(move || {
+        let lines = BufReader::new(stderr).lines().map_while(Result::ok);
+        lines.filter(|l| !l.trim().is_empty()).last().unwrap_or_default()
+    });
+    let status = loop {
+        if stopped() {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Ok(None);
+        }
+        if let Some(status) = child.try_wait().context("ffmpeg stopped unexpectedly")? {
+            break status;
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    };
+    let last = log.join().unwrap_or_default();
+    if !status.success() {
+        log::warn!("ffmpeg could not decode the audio ({status}): {last}");
+        bail!("ffmpeg could not read this file. It may be damaged, or not audio");
+    }
+    Ok(Some(wav))
+}
+
 // ----- playing the video -------------------------------------------------
 
 /// The size of each picture while the video plays. Pictures of another

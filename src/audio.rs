@@ -339,6 +339,25 @@ pub struct Listened {
     /// This app saved the file, reading text aloud, so the words are known
     /// already and transcribing it would only give them back.
     pub made_here: bool,
+    /// The file decoded by ffmpeg into WAV, for a type the app can't decode
+    /// itself. Played instead of the file, and deleted with this.
+    converted: Option<tempfile::TempPath>,
+}
+
+impl Listened {
+    /// The file to play for the audio file at `path`.
+    pub fn playable<'a>(&'a self, path: &'a Path) -> &'a Path {
+        self.converted.as_deref().unwrap_or(path)
+    }
+}
+
+/// Audio file types that only ffmpeg can decode. Olympus and other voice
+/// recorders save WMA.
+pub const FFMPEG_EXTENSIONS: [&str; 1] = ["wma"];
+
+/// The audio file has to be decoded by ffmpeg.
+pub fn needs_ffmpeg(path: &Path) -> bool {
+    path.extension().is_some_and(|e| FFMPEG_EXTENSIONS.iter().any(|x| e.eq_ignore_ascii_case(x)))
 }
 
 /// What the waveform suggests a recording is.
@@ -352,12 +371,23 @@ pub enum SoundKind {
     Silent,
 }
 
-/// Decodes a WAV or MP3 file to mono at `LISTEN_RATE`, and works out its
-/// waveform and whether it sounds like speech. Returns `None` if `stopped`
-/// said to stop, which is checked for each second of audio.
+/// Decodes a WAV, MP3 or WMA file to mono at `LISTEN_RATE`, and works out
+/// its waveform and whether it sounds like speech. WMA is decoded by ffmpeg
+/// first. Returns `None` if `stopped` said to stop, which is checked for
+/// each second of audio.
 pub fn listen(path: &Path, stopped: impl Fn() -> bool) -> anyhow::Result<Option<Listened>> {
     use rodio::Source;
-    let file = std::fs::File::open(path).with_context(|| format!("could not open {}", path.display()))?;
+    let converted = if needs_ffmpeg(path) {
+        let ffmpeg = crate::platform::ffmpeg().context("ffmpeg is needed to open WMA files, and is not installed")?;
+        match crate::video::decode_audio(&ffmpeg, path, &stopped)? {
+            Some(wav) => Some(wav),
+            None => return Ok(None),
+        }
+    } else {
+        None
+    };
+    let source = converted.as_deref().unwrap_or(path);
+    let file = std::fs::File::open(source).with_context(|| format!("could not open {}", path.display()))?;
     let decoder = rodio::Decoder::try_from(file).context("the audio could not be decoded")?;
     let channels = usize::from(decoder.channels().get());
     let rate = decoder.sample_rate().get();
@@ -391,11 +421,14 @@ pub fn listen(path: &Path, stopped: impl Fn() -> bool) -> anyhow::Result<Option<
         waveform: waveform(&pcm.samples, WAVEFORM_BARS),
         sound: sound_kind(&pcm),
         cut_short: frames > keep,
-        made_here: made_by_this_app(path).unwrap_or_else(|e| {
-            log::warn!("could not read the audio file's tag: {e:#}");
-            false
-        }),
+        // Only MP3 files are tagged by this app.
+        made_here: converted.is_none()
+            && made_by_this_app(path).unwrap_or_else(|e| {
+                log::warn!("could not read the audio file's tag: {e:#}");
+                false
+            }),
         pcm,
+        converted,
     }))
 }
 
@@ -871,6 +904,37 @@ mod tests {
         decoder.try_seek(std::time::Duration::from_secs(8)).unwrap();
         let left = decoder.count() as f32 / 22_050.0;
         assert!((left - 4.0).abs() < 0.3, "{left} seconds left after seeking");
+    }
+
+    /// Needs ffmpeg installed.
+    #[test]
+    #[ignore]
+    fn listens_to_a_wma_file_with_ffmpeg() {
+        let ffmpeg = crate::platform::ffmpeg().expect("ffmpeg is installed");
+        let dir = tempfile::tempdir().unwrap();
+        let wav = dir.path().join("talk.wav");
+        let wma = dir.path().join("TALK.WMA");
+        save(&speech_like(12), &wav, AudioFormat::Wav, &Default::default()).unwrap();
+        let made = std::process::Command::new(&ffmpeg)
+            .args(["-v", "error", "-i"])
+            .arg(&wav)
+            .args(["-c:a", "wmav2"])
+            .arg(&wma)
+            .status()
+            .unwrap();
+        assert!(made.success());
+        assert!(needs_ffmpeg(&wma));
+
+        let listened = listen(&wma, || false).unwrap().unwrap();
+        assert!((listened.duration.as_secs_f32() - 12.0).abs() < 0.3, "{:?}", listened.duration);
+        assert_eq!(listened.sound, SoundKind::Speech);
+        assert!(!listened.made_here);
+        let playable = listened.playable(&wma).to_owned();
+        assert_ne!(playable, wma);
+        assert!(rodio::Decoder::try_from(std::fs::File::open(&playable).unwrap()).is_ok());
+        drop(listened);
+        assert!(!playable.exists(), "the WAV made from the WMA file is deleted");
+        assert!(listen(&wma, || true).unwrap().is_none());
     }
 
     #[test]

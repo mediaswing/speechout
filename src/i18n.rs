@@ -159,6 +159,13 @@ const ENGLISH: &[(&str, &str)] = &[
     ("ffmpeg.download_question", "ffmpeg is not installed. Open the ffmpeg download page in your web browser?"),
     ("ffmpeg.declined", "Did not describe {name}. To describe videos, install ffmpeg from ffmpeg.org."),
     ("ffmpeg.page_opened", "Opened the ffmpeg download page. Install ffmpeg, then choose the video again."),
+    (
+        "ffmpeg.intro_audio",
+        "WMA files, such as those from Olympus voice recorders, are opened by ffmpeg, a free program that runs \
+         on this computer, so your recordings are not sent anywhere.",
+    ),
+    ("ffmpeg.declined_audio", "Did not open {name}. To play WMA files, install ffmpeg from ffmpeg.org."),
+    ("ffmpeg.page_opened_audio", "Opened the ffmpeg download page. Install ffmpeg, then choose the audio file again."),
     ("ffmpeg.page_failed", "{error}. Download ffmpeg from {url}"),
     (
         "ffmpeg.installing",
@@ -402,7 +409,7 @@ const ENGLISH: &[(&str, &str)] = &[
     ("player.heading", "Play an audio file and transcribe speech"),
     ("player.choose", "Choose an audio file…{shortcut}"),
     ("player.dialog_title", "Choose an audio file"),
-    ("player.filter", "Audio files and playlists (WAV, MP3 and zip)"),
+    ("player.filter", "Audio files and playlists (WAV, MP3, WMA and zip)"),
     ("player.opening", "Opening {name} and listening for speech.{stop_hint}"),
     ("player.open_stopped", "Stopped opening {name}."),
     ("player.wait_transcribing", "Wait for transcribing to finish, or stop it, before choosing another audio file."),
@@ -443,9 +450,9 @@ const ENGLISH: &[(&str, &str)] = &[
     ("playlist.opened_one", "Opened the playlist {name}, with 1 track."),
     (
         "playlist.missing",
-        "{count} lines of listing.txt don't name a WAV or MP3 file in the zip, so they were skipped.",
+        "{count} lines of listing.txt don't name a WAV, MP3 or WMA file in the zip, so they were skipped.",
     ),
-    ("playlist.missing_one", "1 line of listing.txt doesn't name a WAV or MP3 file in the zip, so it was skipped."),
+    ("playlist.missing_one", "1 line of listing.txt doesn't name a WAV, MP3 or WMA file in the zip, so it was skipped."),
     ("playlist.opening", "Opening track {number} of {count}, {name}.{stop_hint}"),
     ("playlist.loaded", "Opened track {number} of {count}, {name}, {length} long."),
     ("playlist.playing", "Playing track {number} of {count}, {name}, {length} long."),

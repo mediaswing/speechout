@@ -119,7 +119,7 @@ automatically.
 | Control | What it does |
 | --- | --- |
 | Current file | Shows the audio file you chose. |
-| Choose an audio file… | Opens a WAV or MP3 file, or a zip file of them to play as a playlist. The app says how long it is and whether it sounds like speech, music or silence. A long file takes a moment to open; Escape or Stop cancels it. |
+| Choose an audio file… | Opens a WAV, MP3 or WMA file, or a zip file of them to play as a playlist. The app says how long it is and whether it sounds like speech, music or silence. A long file takes a moment to open; Escape or Stop cancels it. WMA files, such as those from Olympus voice recorders, are opened with ffmpeg, which the app offers to install if it's missing, as for videos. |
 | Track | Only for a playlist. Chooses which track to play. |
 | Waveform | A picture of the sound, with the part already played highlighted. Screen readers read its length and what it sounds like. |
 | Play / Pause / Stop | Controls playback. Play carries on from where you paused or moved to. |
@@ -148,7 +148,7 @@ chapter 2.mp3
 
 A name can include the folder the file is in inside the zip, such as
 `part 2/chapter 3.mp3`. Capitals don't matter, and blank lines are skipped.
-The app tells you if a line doesn't name a WAV or MP3 file in the zip. Files
+The app tells you if a line doesn't name a WAV, MP3 or WMA file in the zip. Files
 that `listing.txt` leaves out play after the listed ones. Without a
 `listing.txt`, the files play in order of name, with numbers counted properly,
 so "track 2" comes before "track 10".
