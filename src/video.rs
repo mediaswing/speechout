@@ -5,6 +5,9 @@
 //! A video is also played there while its description is edited, with ffmpeg
 //! writing its pictures and sound as it goes.
 //!
+//! ffmpeg also decodes the audio files the Audio Player tab can't decode
+//! itself, such as WMA recordings.
+//!
 //! ffmpeg is not part of the app. It is found where the usual package
 //! managers put it, and runs on this computer, so the video never leaves it.
 
@@ -195,21 +198,23 @@ pub fn keyframes(
 // ----- audio the app can't decode itself ---------------------------------
 
 /// Decodes an audio file the app can't decode itself, such as WMA, into a
-/// temporary WAV file, deleted when the path is dropped. Keeps its sample
-/// rate and channels, so it plays as it would have. Returns `None` if
-/// `stopped` said to stop.
+/// temporary FLAC file, deleted when the path is dropped. Keeps its sample
+/// rate and channels, so it plays as it would have. FLAC rather than WAV,
+/// which can't hold more than 4 GB, about 6¾ hours of CD-quality stereo, and
+/// is twice the size. The fastest compression, since the file is only
+/// temporary. Returns `None` if `stopped` said to stop.
 pub fn decode_audio(ffmpeg: &Path, audio: &Path, stopped: impl Fn() -> bool) -> anyhow::Result<Option<tempfile::TempPath>> {
-    let wav = tempfile::Builder::new()
+    let decoded = tempfile::Builder::new()
         .prefix("speechout-audio-")
-        .suffix(".wav")
+        .suffix(".flac")
         .tempfile()
         .context("could not make a temporary file for the audio")?
         .into_temp_path();
     let mut child = ffmpeg_command(ffmpeg)
         .args(["-nostats", "-loglevel", "error", "-y", "-i"])
         .arg(audio)
-        .args(["-vn", "-sn", "-dn", "-c:a", "pcm_s16le", "-f", "wav"])
-        .arg(&wav)
+        .args(["-vn", "-sn", "-dn", "-c:a", "flac", "-compression_level", "0", "-sample_fmt", "s16", "-f", "flac"])
+        .arg(&decoded)
         .stdout(Stdio::null())
         .stderr(Stdio::piped())
         .spawn()
@@ -236,7 +241,7 @@ pub fn decode_audio(ffmpeg: &Path, audio: &Path, stopped: impl Fn() -> bool) -> 
         log::warn!("ffmpeg could not decode the audio ({status}): {last}");
         bail!("ffmpeg could not read this file. It may be damaged, or not audio");
     }
-    Ok(Some(wav))
+    Ok(Some(decoded))
 }
 
 // ----- playing the video -------------------------------------------------

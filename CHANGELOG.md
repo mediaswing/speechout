@@ -1,5 +1,22 @@
 # Changelog
 
+## [3.5.0] - 2026-10-22
+
+### Added
+
+- The Audio Player tab now plays and transcribes WMA files, the kind saved by Olympus and other voice recorders, such as the DM650. They're opened with ffmpeg, which runs on your computer, so your recordings aren't sent anywhere. If ffmpeg isn't installed, the app offers to install it, as it does for videos, and then opens the file. WMA files can be tracks in a zip playlist too. A long recording takes a little longer to open than an MP3 of the same length, and Escape still stops it.
+- If Ollama can't use the chosen model to describe a photo or video, for example because it can't load it, or the model gives an empty description, the other vision models you have installed are tried in turn. The first one that works becomes the chosen model, and the app tells you which.
+
+### Changed
+
+- The Audio Player tab now shows the time remaining instead of the length, counting down as the file plays.
+- Speech this app saved as MP3, by reading text aloud, is no longer transcribed when you open it on the Audio Player tab, since its words are known already. The app says so instead, and "Transcribe the speech" still transcribes it if you want.
+
+### Fixed
+
+- When Ollama can't describe a photo, the app now says why, such as a model it can't load, instead of giving only an error code.
+- Installing ffmpeg for a video, or now a WMA file, can no longer be interrupted by the app looking for AI models in the meantime, which could lose the waiting file or offer to set up Ollama for it.
+
 ## [3.4.0] - 2026-10-22
 
 ### Added

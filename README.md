@@ -566,7 +566,7 @@ src/document/         Text extraction, one file per format: PDF, TXT, Markdown, 
                       ODT and ODS, CSV, PPTX, PPT and EPUB
 src/vision.rs         Photo descriptions, GPS and place names
 src/ollama.rs         Talking to Ollama, the local AI model server
-src/video.rs          Taking keyframes out of a video with ffmpeg
+src/video.rs          Taking keyframes out of a video with ffmpeg, and decoding WMA
 src/transcribe.rs     Speech recognition with Whisper, and downloading its models
 src/speakers.rs       Working out who is speaking, with sherpa-onnx
 src/wordlist.rs       Wordlist parsing and substitution

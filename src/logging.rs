@@ -101,11 +101,10 @@ fn same_file(a: &Path, b: &Path) -> bool {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, unix))]
 mod tests {
     use super::*;
 
-    #[cfg(unix)]
     #[test]
     fn a_link_in_place_of_the_log_is_not_followed() {
         let dir = tempfile::tempdir().unwrap();

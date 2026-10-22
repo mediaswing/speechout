@@ -40,7 +40,7 @@ impl SpeechApp {
     /// Installing ffmpeg finished.
     pub(super) fn ffmpeg_ready(&mut self, result: Result<PathBuf, String>) {
         self.setting_up_ffmpeg = false;
-        let waiting = self.waiting.take();
+        let waiting = self.waiting_for_ffmpeg.take();
         match result {
             Ok(_) => match waiting {
                 Some(Waiting::Video(path)) => self.describe_video(path, t("ffmpeg.installed")),
@@ -184,7 +184,7 @@ impl SpeechApp {
             return;
         };
         self.setting_up_ffmpeg = true;
-        self.waiting = Some(waiting);
+        self.waiting_for_ffmpeg = Some(waiting);
         self.announce(tf("ffmpeg.installing", &[("manager", &manager)]));
         self.rep.spawn(worker::install_ffmpeg);
     }

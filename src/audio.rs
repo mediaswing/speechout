@@ -339,7 +339,7 @@ pub struct Listened {
     /// This app saved the file, reading text aloud, so the words are known
     /// already and transcribing it would only give them back.
     pub made_here: bool,
-    /// The file decoded by ffmpeg into WAV, for a type the app can't decode
+    /// The file decoded by ffmpeg into FLAC, for a type the app can't decode
     /// itself. Played instead of the file, and deleted with this.
     converted: Option<tempfile::TempPath>,
 }
@@ -933,7 +933,7 @@ mod tests {
         assert_ne!(playable, wma);
         assert!(rodio::Decoder::try_from(std::fs::File::open(&playable).unwrap()).is_ok());
         drop(listened);
-        assert!(!playable.exists(), "the WAV made from the WMA file is deleted");
+        assert!(!playable.exists(), "the FLAC file made from the WMA file is deleted");
         assert!(listen(&wma, || true).unwrap().is_none());
     }
 

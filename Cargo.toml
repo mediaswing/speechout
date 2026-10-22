@@ -1,6 +1,6 @@
 [package]
 name = "speechout"
-version = "3.4.0"
+version = "3.5.0"
 edition = "2024"
 description = "Speech Output Engine: an accessible text-to-speech reader for documents and images"
 license = "GPL-3.0-or-later"
@@ -15,7 +15,7 @@ path = "src/main.rs"
 [dependencies]
 eframe = { version = "0.36", default-features = false, features = ["accesskit", "default_fonts", "glow", "wayland", "x11"] }
 egui = "0.36"
-rodio = { version = "0.22", default-features = false, features = ["playback", "mp3", "wav", "symphonia-mp3", "symphonia-wav"] }
+rodio = { version = "0.22", default-features = false, features = ["playback", "mp3", "wav", "symphonia-mp3", "symphonia-wav", "symphonia-flac"] }
 ureq = { version = "3", default-features = false, features = ["rustls", "json"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

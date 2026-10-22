@@ -6,6 +6,7 @@ use super::*;
 
 /// A photo or video chosen before the programs that describe it were found
 /// or set up, to describe once they are, or a WMA file waiting for ffmpeg.
+/// Only photos and videos wait for an AI model.
 pub(super) enum Waiting {
     Photo(PathBuf),
     Video(PathBuf),

@@ -125,8 +125,12 @@ pub struct SpeechApp {
     waiting: Option<Waiting>,
     /// Ollama is being installed or started for a waiting photo or video.
     setting_up_ollama: bool,
-    /// ffmpeg is being installed for a waiting video.
+    /// ffmpeg is being installed for a waiting video or WMA file.
     setting_up_ffmpeg: bool,
+    /// The video or WMA file to open once ffmpeg is installed. Kept apart
+    /// from `waiting`, so finding or downloading an AI model meanwhile
+    /// doesn't take it.
+    waiting_for_ffmpeg: Option<Waiting>,
     /// The Describe Video tab.
     video: VideoTab,
     /// The window has been checked against the screen size.
@@ -212,6 +216,7 @@ impl SpeechApp {
             waiting: None,
             setting_up_ollama: false,
             setting_up_ffmpeg: false,
+            waiting_for_ffmpeg: None,
             video: VideoTab::default(),
             fitted_to_screen: false,
             job: None,

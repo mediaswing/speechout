@@ -499,8 +499,8 @@ pub fn open_playlist(rep: Reporter, control: Arc<Control>, path: PathBuf) {
 }
 
 /// Plays an audio file from `start`, reporting the position as it goes.
-/// The control pauses, moves and stops it. Holding `audio` keeps the WAV
-/// that ffmpeg made from a WMA file until playing it has stopped.
+/// The control pauses, moves and stops it. Holding `audio` keeps the file
+/// that ffmpeg decoded a WMA file into until playing it has stopped.
 pub fn play_audio(rep: Reporter, control: Arc<Control>, path: PathBuf, audio: Arc<audio::Listened>, start: Duration) {
     use anyhow::Context;
     let result = contain(|| {
