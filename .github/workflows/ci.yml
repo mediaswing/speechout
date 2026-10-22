@@ -1,12 +1,13 @@
-# Builds and tests the app on Windows, on x64 and Arm PCs, for every push to
-# main and every pull request. Windows code (src/platform/windows.rs and
-# src/platform/context_menu.rs) can't be compiled on a Mac or Linux machine,
-# so without this it would only be built when a release is tagged (see
-# release.yml).
+# Builds and tests the app on Windows (x64 and Arm), Ubuntu and macOS for
+# every push to main and every pull request. Each system's own code, such as
+# src/platform/windows.rs or src/package/linux.rs, can only be compiled on
+# that system, so without this it would only be built when a release is
+# tagged (see release.yml).
 #
-# The build is set up as the release workflow's windows job sets it up, with
-# libheif built in (the bundled-heif feature), so what is tested here is what
-# is released. Nothing is packaged or published.
+# Each job is set up as the release workflow's job for that system is, so
+# what is tested here is what is released. The Ubuntu and macOS jobs also
+# build their package with --package-deb and --package-macos and check it,
+# but nothing is installed, uploaded or published.
 
 name: CI
 
@@ -96,3 +97,53 @@ jobs:
           cargo clean --locked -p sherpa-onnx-sys
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - run: cargo test --locked --features bundled-heif
+
+  ubuntu:
+    name: Ubuntu
+    # As in release.yml: the oldest supported Ubuntu LTS.
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: awalsh128/cache-apt-pkgs-action@v1.6.3
+        with:
+          packages: >-
+            pkg-config libasound2-dev libxkbcommon-dev libwayland-dev
+            libgl1-mesa-dev libx11-dev libxcursor-dev libxrandr-dev libxi-dev
+          version: 1
+      - uses: dtolnay/rust-toolchain@stable
+      # sherpa-onnx is linked statically here, so its libraries are built into
+      # the cached build itself and need no fetching again, unlike on Windows.
+      - uses: Swatinem/rust-cache@v2.9.2
+        with:
+          prefix-key: v1-rust-ci
+      - run: cargo test --locked
+      # The tests' build of the app, packaged as the release job packages its
+      # own, and checked with dpkg.
+      - name: Build and check a .deb
+        run: |
+          set -euo pipefail
+          target/debug/speechout --package-deb dist
+          deb=$(ls dist/*.deb)
+          dpkg-deb --info "$deb"
+          dpkg-deb --contents "$deb" | grep -q './usr/bin/speechout$'
+
+  macos:
+    name: macOS (Apple Silicon)
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: dtolnay/rust-toolchain@stable
+      # sherpa-onnx is linked statically here too.
+      - uses: Swatinem/rust-cache@v2.9.2
+        with:
+          prefix-key: v1-rust-ci
+      - run: cargo test --locked
+      # The tests' build of the app, packaged as the release job packages its
+      # own. The bundle's signature and the installer's contents are checked,
+      # but the package isn't installed.
+      - name: Build and check a .pkg
+        run: |
+          set -euo pipefail
+          target/debug/speechout --package-macos dist
+          codesign --verify --strict --verbose=2 "dist/root/Speech Output Engine.app"
+          pkgutil --payload-files dist/*.pkg | grep -q 'Speech Output Engine.app/Contents/MacOS/speechout$'

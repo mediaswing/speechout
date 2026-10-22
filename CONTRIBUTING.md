@@ -155,9 +155,9 @@ really happens before you send it.
    with `cargo test -- --ignored`. See the README for the Ubuntu build
    dependencies, and for building HEIC support into the Windows app with the
    `bundled-heif` feature.
-   Every push and pull request is also built and tested on Windows, on x64
-   and Arm, since that code can't be compiled elsewhere
-   (`.github/workflows/ci.yml`).
+   Every push and pull request is also built and tested on Windows (x64 and
+   Arm), Ubuntu and macOS, since each system's own code can only be compiled
+   there (`.github/workflows/ci.yml`).
 3. Add tests for new behaviour where you can, especially in code that doesn't
    depend on the window, such as wordlists and document reading. The documents
    in `assets/tests/documents` are each read with their content and with their
