@@ -260,6 +260,12 @@ mod tests {
         assert!(clean_pasted(&long).chars().count() <= MAX_PASTED_CHARS);
     }
 
+    /// Files such as the .DS_Store that macOS's Finder leaves in a folder it
+    /// has shown, which aren't test documents.
+    fn is_hidden(path: &Path) -> bool {
+        path.file_name().is_some_and(|name| name.to_string_lossy().starts_with('.'))
+    }
+
     /// Set to save what the documents read as, after a change that is meant
     /// to alter it. Check the difference in Git before committing it.
     const UPDATE_EXPECTED: &str = "SPEECHOUT_UPDATE_EXPECTED";
@@ -274,7 +280,7 @@ mod tests {
         let expected_dir = dir.join("expected");
         let update = std::env::var_os(UPDATE_EXPECTED).is_some();
         let mut documents: Vec<_> =
-            std::fs::read_dir(&dir).unwrap().map(|e| e.unwrap().path()).filter(|p| p.is_file()).collect();
+            std::fs::read_dir(&dir).unwrap().map(|e| e.unwrap().path()).filter(|p| p.is_file() && !is_hidden(p)).collect();
         documents.sort();
         let mut saved_for = Vec::new();
         let mut differ = Vec::new();
@@ -302,6 +308,9 @@ mod tests {
         // Saved text with no document left to read is out of date.
         for saved in std::fs::read_dir(&expected_dir).unwrap() {
             let name = saved.unwrap().file_name().to_string_lossy().into_owned();
+            if name.starts_with('.') {
+                continue;
+            }
             assert!(saved_for.contains(&name), "{name} is saved, but there is no document for it");
         }
     }
