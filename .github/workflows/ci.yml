@@ -5,9 +5,9 @@
 # tagged (see release.yml).
 #
 # Each job is set up as the release workflow's job for that system is, so
-# what is tested here is what is released. The Ubuntu and macOS jobs also
-# build their package with --package-deb and --package-macos and check it,
-# but nothing is installed, uploaded or published.
+# what is tested here is what is released. The Ubuntu tests and the macOS
+# job also build each system's package and check it, but nothing is
+# installed, uploaded or published.
 
 name: CI
 
@@ -116,16 +116,9 @@ jobs:
       - uses: Swatinem/rust-cache@v2.9.2
         with:
           prefix-key: v1-rust-ci
+      # Among the tests, builds_valid_deb (src/package/linux.rs) packages the
+      # test build and checks the .deb with dpkg-deb, which this runner has.
       - run: cargo test --locked
-      # The tests' build of the app, packaged as the release job packages its
-      # own, and checked with dpkg.
-      - name: Build and check a .deb
-        run: |
-          set -euo pipefail
-          target/debug/speechout --package-deb dist
-          deb=$(ls dist/*.deb)
-          dpkg-deb --info "$deb"
-          dpkg-deb --contents "$deb" | grep -q './usr/bin/speechout$'
 
   macos:
     name: macOS (Apple Silicon)
@@ -146,4 +139,7 @@ jobs:
           set -euo pipefail
           target/debug/speechout --package-macos dist
           codesign --verify --strict --verbose=2 "dist/root/Speech Output Engine.app"
-          pkgutil --payload-files dist/*.pkg | grep -q 'Speech Output Engine.app/Contents/MacOS/speechout$'
+          # Read whole before searching: grep -q stopping early would end
+          # pkgutil with SIGPIPE, which pipefail counts as a failure.
+          files=$(pkgutil --payload-files dist/*.pkg)
+          grep -q 'Speech Output Engine.app/Contents/MacOS/speechout$' <<< "$files"
