@@ -409,6 +409,10 @@ const ENGLISH: &[(&str, &str)] = &[
     ("player.speech", "It sounds like speech, so it will be transcribed."),
     ("player.cut_short", "Only the first three hours can be transcribed."),
     (
+        "player.made_here",
+        "It was read aloud by this app, so it was not transcribed. Press \"{button}\" to transcribe it anyway.",
+    ),
+    (
         "player.not_speech",
         "It sounds mostly like music or other sounds rather than speech, so it was not transcribed. Press \
          \"{button}\" to try anyway.{play_hint}",

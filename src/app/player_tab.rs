@@ -235,7 +235,7 @@ impl SpeechApp {
             }
             None => tf("player.loaded", &[("name", &name), ("length", &length)]),
         };
-        if audio.sound == SoundKind::Speech {
+        if audio.sound == SoundKind::Speech && !audio.made_here {
             if audio.cut_short {
                 intro = format!("{intro} {}", t("player.cut_short"));
             }
@@ -258,6 +258,7 @@ impl SpeechApp {
         }
         let note = match audio.sound {
             SoundKind::Silent => t("player.silent"),
+            SoundKind::Speech if audio.made_here => tf("player.made_here", &[("button", &t("player.transcribe"))]),
             SoundKind::Speech => tf("playlist.not_transcribed", &[("button", &t("player.transcribe"))]),
             SoundKind::Other if playing => String::new(),
             SoundKind::Other => tf("player.not_speech", &[("button", &t("player.transcribe"))]),

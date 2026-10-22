@@ -173,6 +173,8 @@ fn encode_mp3(pcm: &Pcm) -> anyhow::Result<Vec<u8>> {
 /// Explorer, Apple Music and other players all read; LAME's own tag writer
 /// would only take Latin-1, losing names such as "Café" or "日本語".
 fn id3_tag(tags: &Tags) -> Vec<u8> {
+    // The Audio Player tab looks for this to tell the app's own speech,
+    // which has no need to be transcribed; see `made_by_this_app`.
     let software = format!("{} {}", crate::APP_TITLE, env!("CARGO_PKG_VERSION"));
     let fields = [(b"TIT2", &tags.title), (b"TPE1", &tags.artist), (b"TALB", &tags.album), (b"TSSE", &software)];
     let mut frames = Vec::new();
@@ -334,6 +336,9 @@ pub struct Listened {
     /// The file is longer than `MAX_LISTEN_SECS`, so only the start of it
     /// can be transcribed.
     pub cut_short: bool,
+    /// This app saved the file, reading text aloud, so the words are known
+    /// already and transcribing it would only give them back.
+    pub made_here: bool,
 }
 
 /// What the waveform suggests a recording is.
@@ -386,8 +391,87 @@ pub fn listen(path: &Path, stopped: impl Fn() -> bool) -> anyhow::Result<Option<
         waveform: waveform(&pcm.samples, WAVEFORM_BARS),
         sound: sound_kind(&pcm),
         cut_short: frames > keep,
+        made_here: made_by_this_app(path).unwrap_or_else(|e| {
+            log::warn!("could not read the audio file's tag: {e:#}");
+            false
+        }),
         pcm,
     }))
+}
+
+/// Whether the file's ID3 tag names this app as the software that made it,
+/// as `id3_tag` writes. Other tag editors may have rewritten the tag since,
+/// so versions 2.3 and 2.4 and any text encoding are read. Frames other than
+/// the software one are skipped over unread, so cover art costs nothing.
+pub fn made_by_this_app(path: &Path) -> anyhow::Result<bool> {
+    use std::io::{BufReader, Read};
+    let mut file = BufReader::new(std::fs::File::open(path)?);
+    let mut header = [0u8; 10];
+    if file.read_exact(&mut header).is_err() || &header[..3] != b"ID3" {
+        return Ok(false);
+    }
+    let version = header[3];
+    let flags = header[5];
+    // Version 2.2's frames are different, and an unsynchronised tag would
+    // have to be undone byte by byte: neither is written by this app, nor
+    // by anything likely to keep its software frame.
+    if !(3..=4).contains(&version) || flags & 0x80 != 0 {
+        return Ok(false);
+    }
+    let synchsafe = |b: [u8; 4]| b.iter().fold(0u32, |n, b| n << 7 | u32::from(b & 0x7F));
+    let mut left = i64::from(synchsafe(header[6..10].try_into()?));
+    if flags & 0x40 != 0 {
+        // An extended header, whose size counts itself in 2.4 but not 2.3.
+        let mut size = [0u8; 4];
+        file.read_exact(&mut size)?;
+        let skip = if version == 4 { i64::from(synchsafe(size)) - 4 } else { i64::from(u32::from_be_bytes(size)) };
+        file.seek_relative(skip)?;
+        left -= skip + 4;
+    }
+    while left >= 10 {
+        let mut frame = [0u8; 10];
+        file.read_exact(&mut frame)?;
+        // The rest of the tag is padding.
+        if frame[0] == 0 {
+            break;
+        }
+        let size_bytes = frame[4..8].try_into()?;
+        let size = if version == 4 { synchsafe(size_bytes) } else { u32::from_be_bytes(size_bytes) };
+        left -= 10 + i64::from(size);
+        if &frame[..4] != b"TSSE" {
+            file.seek_relative(i64::from(size))?;
+            continue;
+        }
+        if size > 1024 {
+            return Ok(false);
+        }
+        let mut body = vec![0u8; size as usize];
+        file.read_exact(&mut body)?;
+        let software = id3_text(&body);
+        let software = software.trim_end_matches('\0').trim();
+        return Ok(software == crate::APP_TITLE || software.starts_with(&format!("{} ", crate::APP_TITLE)));
+    }
+    Ok(false)
+}
+
+/// The text of an ID3 text frame: an encoding byte, then the text.
+fn id3_text(body: &[u8]) -> String {
+    let Some((&encoding, text)) = body.split_first() else { return String::new() };
+    let utf16 = |text: &[u8], big_endian: bool| {
+        let units = text.as_chunks::<2>().0.iter();
+        let units = units.map(|&c| if big_endian { u16::from_be_bytes(c) } else { u16::from_le_bytes(c) });
+        char::decode_utf16(units).map(|c| c.unwrap_or(char::REPLACEMENT_CHARACTER)).collect()
+    };
+    match encoding {
+        0 => text.iter().map(|&b| char::from(b)).collect(),
+        1 => match text {
+            [0xFF, 0xFE, rest @ ..] => utf16(rest, false),
+            [0xFE, 0xFF, rest @ ..] => utf16(rest, true),
+            _ => utf16(text, false),
+        },
+        2 => utf16(text, true),
+        _ => String::from_utf8_lossy(text).into_owned(),
+    }
 }
 
 /// Changes the sample rate of a stream of samples, one at a time, so a long
@@ -635,6 +719,43 @@ mod tests {
         let ids: Vec<&str> = frames.iter().map(|(id, _)| id.as_str()).collect();
         assert_eq!(ids, ["TALB", "TSSE"]);
         assert_eq!(frames[0].1, "Notes");
+    }
+
+    #[test]
+    fn knows_its_own_speech() {
+        let dir = tempfile::tempdir().unwrap();
+        let ours = dir.path().join("ours.mp3");
+        save(&tone(), &ours, AudioFormat::Mp3, &Tags::default()).unwrap();
+        assert!(made_by_this_app(&ours).unwrap());
+
+        let untagged = dir.path().join("untagged.mp3");
+        std::fs::write(&untagged, encode_mp3(&tone()).unwrap()).unwrap();
+        assert!(!made_by_this_app(&untagged).unwrap());
+
+        let wav = dir.path().join("speech.wav");
+        save(&tone(), &wav, AudioFormat::Wav, &Tags::default()).unwrap();
+        assert!(!made_by_this_app(&wav).unwrap());
+
+        // Retagged by another editor as version 2.4 in UTF-8, with a large
+        // frame first, as cover art would be.
+        let synchsafe = |n: u32| [21, 14, 7, 0].map(|shift| (n >> shift & 0x7F) as u8);
+        let frame = |id: &[u8], body: &[u8]| [id, &synchsafe(body.len() as u32), &[0, 0], body].concat();
+        let retag = |software: &str| {
+            let frames = [
+                frame(b"APIC", &vec![7; 300_000]),
+                frame(b"TSSE", &[&[3], format!("{software}\0").as_bytes()].concat()),
+            ]
+            .concat();
+            [b"ID3\x04\x00\x00".as_slice(), &synchsafe(frames.len() as u32), &frames, &encode_mp3(&tone()).unwrap()]
+                .concat()
+        };
+        let retagged = dir.path().join("retagged.mp3");
+        std::fs::write(&retagged, retag("Speech Output Engine 3.4.0")).unwrap();
+        assert!(made_by_this_app(&retagged).unwrap());
+        std::fs::write(&retagged, retag("Lavf60.3.100")).unwrap();
+        assert!(!made_by_this_app(&retagged).unwrap());
+        std::fs::write(&retagged, retag("Speech Output Engineering Tools")).unwrap();
+        assert!(!made_by_this_app(&retagged).unwrap());
     }
 
     #[test]
