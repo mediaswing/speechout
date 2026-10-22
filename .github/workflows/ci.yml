@@ -67,7 +67,13 @@ jobs:
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force $env:VCPKG_DEFAULT_BINARY_CACHE | Out-Null
-          & "$env:VCPKG_INSTALLATION_ROOT\vcpkg.exe" install "libheif[core]:${{ matrix.triplet }}" --disable-metrics
+          # libheif 1.23.6 made its HEIC decoder, libde265, a default feature,
+          # which [core] leaves out; older ports, still on some runner images,
+          # always build it and have no such feature. Without it the app can't
+          # link, nor decode HEIC photos.
+          $port = Get-Content "$env:VCPKG_INSTALLATION_ROOT\ports\libheif\vcpkg.json" -Raw | ConvertFrom-Json
+          $features = if ($port.features.PSObject.Properties.Name -contains 'libde265') { 'core,libde265' } else { 'core' }
+          & "$env:VCPKG_INSTALLATION_ROOT\vcpkg.exe" install "libheif[$features]:${{ matrix.triplet }}" --disable-metrics
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           "VCPKG_ROOT=$env:VCPKG_INSTALLATION_ROOT" >> $env:GITHUB_ENV
       # whisper.cpp's ggml can't be built for Arm with MSVC's own compiler;
