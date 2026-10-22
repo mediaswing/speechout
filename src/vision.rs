@@ -223,8 +223,12 @@ pub fn describe(path: &Path, model: &str, resolve_location: bool, read_camera: b
     let Prepared { jpeg, was_png } = prepare_image(path)?;
     let b64 = base64::engine::general_purpose::STANDARD.encode(jpeg);
     log::info!("describing image with model {model}");
+    // Ollama explains a failure, such as a model it can't load, in the reply.
     let body: Value = crate::ollama::agent()
         .post(&format!("{}/api/generate", crate::ollama::OLLAMA_URL))
+        .config()
+        .http_status_as_error(false)
+        .build()
         .send_json(json!({
             "model": model,
             "prompt": PROMPT,
@@ -235,6 +239,9 @@ pub fn describe(path: &Path, model: &str, resolve_location: bool, read_camera: b
         .body_mut()
         .read_json()
         .context("Ollama sent an unexpected reply")?;
+    if let Some(error) = body["error"].as_str() {
+        bail!("Ollama could not use the model {model}: {error}");
+    }
     let mut description = plain_text(body["response"].as_str().unwrap_or_default());
     if description.is_empty() {
         bail!("the model returned an empty description. Try a vision model such as llama3.2-vision, gemma3 or llava.");
