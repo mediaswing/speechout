@@ -966,6 +966,46 @@ pub fn translate(rep: Reporter, control: Arc<Control>, language: Language, model
 mod tests {
     use super::*;
 
+    /// What `Quarters` sends for each fraction in turn: the progress bar's
+    /// position, or the percentage announced.
+    fn quarters_sent(fractions: &[f32]) -> Vec<String> {
+        let (tx, rx) = std::sync::mpsc::channel();
+        let rep = Reporter::new(tx, egui::Context::default());
+        let mut quarters = Quarters::new(&rep, "model.download_progress");
+        for fraction in fractions {
+            quarters.report(&rep, *fraction);
+        }
+        drop((rep, quarters));
+        rx.into_iter()
+            .map(|msg| match msg {
+                Msg::Progress(f) => format!("bar {f}"),
+                // Only the number, which is the same in any language.
+                Msg::Status(s) => format!("said {}", s.split(|c: char| !c.is_ascii_digit()).find(|n| !n.is_empty()).unwrap()),
+                _ => panic!("unexpected message"),
+            })
+            .collect()
+    }
+
+    #[test]
+    fn long_jobs_announce_each_quarter_once() {
+        assert_eq!(
+            quarters_sent(&[0.001, 0.1, 0.26, 0.26, 0.9, 1.0]),
+            [
+                // The bar starts at nothing; less than half a percent more
+                // isn't worth moving it for.
+                "bar 0",
+                "bar 0.1",
+                "bar 0.26",
+                "said 25",
+                // A quarter skipped over is not announced late.
+                "bar 0.9",
+                "said 75",
+                // Done is said by the job itself, not as "100% done".
+                "bar 1",
+            ]
+        );
+    }
+
     /// Plays a three-second video made with ffmpeg, which must be installed:
     /// from a second in to the end, then moved forward and stopped.
     #[test]

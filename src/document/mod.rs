@@ -259,4 +259,64 @@ mod tests {
         let long = "ab ".repeat(MAX_PASTED_CHARS);
         assert!(clean_pasted(&long).chars().count() <= MAX_PASTED_CHARS);
     }
+
+    /// Set to save what the documents read as, after a change that is meant
+    /// to alter it. Check the difference in Git before committing it.
+    const UPDATE_EXPECTED: &str = "SPEECHOUT_UPDATE_EXPECTED";
+
+    /// Reads every document in assets/tests/documents with its content and
+    /// with its format, and compares the text with what was saved for it in
+    /// `expected`. Any change to what a document reads as shows up here,
+    /// such as one made by accident while moving code around.
+    #[test]
+    fn documents_read_as_expected() {
+        let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("assets/tests/documents");
+        let expected_dir = dir.join("expected");
+        let update = std::env::var_os(UPDATE_EXPECTED).is_some();
+        let mut documents: Vec<_> =
+            std::fs::read_dir(&dir).unwrap().map(|e| e.unwrap().path()).filter(|p| p.is_file()).collect();
+        documents.sort();
+        let mut saved_for = Vec::new();
+        let mut differ = Vec::new();
+        for path in &documents {
+            let file = path.file_name().unwrap().to_string_lossy();
+            assert!(FileKind::from_path(path).is_some(), "{file} is not a kind of file the app reads");
+            for (reading, how) in [(DocumentReading::Content, "content"), (DocumentReading::Format, "format")] {
+                let text = extract_text(path, reading).unwrap_or_else(|e| panic!("{file} could not be read: {e:#}"));
+                let name = format!("{file}.{how}.txt");
+                let expected = expected_dir.join(&name);
+                saved_for.push(name.clone());
+                if update {
+                    std::fs::write(&expected, &text).unwrap();
+                } else if std::fs::read_to_string(&expected).ok().as_deref() != Some(text.as_str()) {
+                    differ.push(name);
+                }
+            }
+        }
+        assert!(
+            differ.is_empty(),
+            "these read differently from the text saved in {}: {differ:?}. If the change is meant, run the tests \
+             with {UPDATE_EXPECTED}=1 to save the new text, and check the difference before committing it.",
+            expected_dir.display()
+        );
+        // Saved text with no document left to read is out of date.
+        for saved in std::fs::read_dir(&expected_dir).unwrap() {
+            let name = saved.unwrap().file_name().to_string_lossy().into_owned();
+            assert!(saved_for.contains(&name), "{name} is saved, but there is no document for it");
+        }
+    }
+
+    /// A new kind of file needs a document in assets/tests/documents too.
+    /// PPT files are left out: they can only be made with PowerPoint, so
+    /// their tests build the records they hold instead.
+    #[test]
+    fn every_kind_of_document_has_a_test_document() {
+        let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("assets/tests/documents");
+        let kinds: Vec<FileKind> = std::fs::read_dir(dir).unwrap().filter_map(|e| FileKind::from_path(&e.unwrap().path())).collect();
+        for (ext, kind) in EXTENSIONS {
+            if !matches!(kind, FileKind::Image | FileKind::Ppt) {
+                assert!(kinds.contains(&kind), "no test document for {kind:?} files, such as .{ext}");
+            }
+        }
+    }
 }

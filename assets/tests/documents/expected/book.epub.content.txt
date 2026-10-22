@@ -1,0 +1,43 @@
+Why Read? By Ann Author and Bob & Co.
+
+Chapter One—Start
+
+The story begins in Leicester. An “entity” & more…
+
+Mid sentence with italic, bold, under, gone, link and not a link.
+
+Image: A lantern on a table.
+
+One
+
+Nested
+
+Two
+
+Ordered
+
+Quoted
+
+Again
+
+code line second
+
+Cap
+
+H1
+
+H2
+
+a
+
+b
+
+Email me at jo@example.com on 2026-10-22. New line.
+
+Two
+
+Second chapter.
+
+Term
+
+Definition

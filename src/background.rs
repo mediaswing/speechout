@@ -72,7 +72,7 @@ fn read(settings: &Settings, path: &Path, name: &str, control: Arc<Control>) -> 
     }
     let wordlists = wordlist::list_installed(&crate::paths::wordlist_dir());
     let text = crate::spoken::prepare(&text, &wordlists, &settings.disabled_wordlists);
-    let job = match job_for(settings, system_voices_only, text) {
+    let job = match job_for(settings, system_voices_only, text, crate::secrets::get) {
         Ok(job) => job,
         Err(e) => return fail(tf("background.failed", &[("name", &name), ("error", &e)])),
     };
@@ -99,10 +99,16 @@ fn read(settings: &Settings, path: &Path, name: &str, control: Arc<Control>) -> 
 
 /// A job for the saved service and voice, as the window would make it.
 /// `system_voices_only` is for a file, such as a PNG screenshot, that must not
-/// be read with a cloud voice.
-fn job_for(settings: &Settings, system_voices_only: bool, text: String) -> Result<SpeechJob, String> {
+/// be read with a cloud voice. `secret` looks up a saved API key by name, as
+/// `secrets::get` does.
+fn job_for(
+    settings: &Settings,
+    system_voices_only: bool,
+    text: String,
+    secret: impl Fn(&str) -> Option<String>,
+) -> Result<SpeechJob, String> {
     // A key is only looked up for a file a cloud voice may read.
-    let key = settings.provider.key_name().filter(|_| !system_voices_only).and_then(crate::secrets::get);
+    let key = settings.provider.key_name().filter(|_| !system_voices_only).and_then(secret);
     let provider = settings.provider.or_system(key.is_some(), system_voices_only);
     let voice = match settings.voice_for(provider) {
         Some(voice) => voice.to_owned(),
@@ -149,4 +155,54 @@ fn fail(message: String) -> ExitCode {
         .set_level(rfd::MessageLevel::Error)
         .show();
     ExitCode::FAILURE
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Settings that choose ElevenLabs, with a voice saved for it and for the
+    /// system voices, so no voices need to be fetched.
+    fn eleven_labs_chosen() -> Settings {
+        let mut settings = Settings::default();
+        settings.provider = Provider::ElevenLabs;
+        settings.announce_parts = true;
+        settings.set_voice(Provider::ElevenLabs, "rachel".into());
+        settings.set_voice(Provider::System, "Daniel".into());
+        settings.set_speed(Provider::ElevenLabs, 1.1);
+        settings
+    }
+
+    #[test]
+    fn reads_with_the_chosen_cloud_voice_and_its_key() {
+        let job = job_for(&eleven_labs_chosen(), false, "Hello".into(), |name| {
+            assert_eq!(name, "elevenlabs_api_key");
+            Some("key".into())
+        })
+        .unwrap();
+        assert_eq!((job.provider, job.key.as_deref(), job.voice.as_str()), (Provider::ElevenLabs, Some("key"), "rachel"));
+        assert_eq!(job.speed, Provider::ElevenLabs.clamp_speed(1.1));
+        assert_eq!(job.text, "Hello");
+        assert!(job.announce_parts && !job.preview);
+    }
+
+    #[test]
+    fn falls_back_to_system_voices_without_a_key() {
+        let job = job_for(&eleven_labs_chosen(), false, "Hello".into(), |_| None).unwrap();
+        assert_eq!((job.provider, job.key, job.voice.as_str()), (Provider::System, None, "Daniel"));
+    }
+
+    /// A PNG screenshot's description never goes to a cloud service, and its
+    /// key isn't even looked up.
+    #[test]
+    fn screenshots_are_read_with_system_voices() {
+        let job = job_for(&eleven_labs_chosen(), true, "Hello".into(), |name| panic!("looked up {name}")).unwrap();
+        assert_eq!((job.provider, job.key, job.voice.as_str()), (Provider::System, None, "Daniel"));
+    }
+
+    #[test]
+    fn system_voices_need_no_key_or_saved_voice() {
+        let job = job_for(&Settings::default(), false, "Hello".into(), |name| panic!("looked up {name}")).unwrap();
+        assert_eq!((job.provider, job.key, job.voice.as_str()), (Provider::System, None, ""));
+    }
 }

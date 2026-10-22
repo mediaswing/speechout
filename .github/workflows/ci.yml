@@ -1,0 +1,87 @@
+# Builds and tests the app on Windows, on x64 and Arm PCs, for every push to
+# main and every pull request. Windows code (src/platform/windows.rs and
+# src/platform/context_menu.rs) can't be compiled on a Mac or Linux machine,
+# so without this it would only be built when a release is tagged (see
+# release.yml).
+#
+# The build is set up as the release workflow's windows job sets it up, with
+# libheif built in (the bundled-heif feature), so what is tested here is what
+# is released. Nothing is packaged or published.
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# A newer push to the same branch or pull request makes an older run pointless.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  # As in release.yml: build whisper.cpp for the processor features most
+  # computers have, not the runner's own.
+  GGML_NATIVE: "OFF"
+
+jobs:
+  windows:
+    name: Windows (${{ matrix.arch }})
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      # Let both builds finish, so a failure in one doesn't hide the other's.
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x86_64
+            runner: windows-latest
+            triplet: x64-windows-static-md
+          - arch: aarch64
+            runner: windows-11-arm
+            triplet: arm64-windows-static-md
+    env:
+      VCPKGRS_TRIPLET: ${{ matrix.triplet }}
+      VCPKG_DEFAULT_BINARY_CACHE: ${{ github.workspace }}\vcpkg-cache
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: dtolnay/rust-toolchain@stable
+      # As in release.yml, sherpa-onnx-sys's downloaded libraries are cached
+      # with the build.
+      - uses: Swatinem/rust-cache@v2.9.2
+        with:
+          prefix-key: v1-rust
+          cache-directories: target/sherpa-onnx-prebuilt
+      - uses: actions/cache@v6.1.0
+        with:
+          path: vcpkg-cache
+          key: vcpkg-libheif-${{ matrix.triplet }}-${{ hashFiles('Cargo.lock') }}
+          restore-keys: vcpkg-libheif-${{ matrix.triplet }}-
+      # The runner image includes vcpkg.
+      - name: Install libheif with vcpkg
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force $env:VCPKG_DEFAULT_BINARY_CACHE | Out-Null
+          & "$env:VCPKG_INSTALLATION_ROOT\vcpkg.exe" install "libheif[core]:${{ matrix.triplet }}" --disable-metrics
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          "VCPKG_ROOT=$env:VCPKG_INSTALLATION_ROOT" >> $env:GITHUB_ENV
+      # whisper.cpp's ggml can't be built for Arm with MSVC's own compiler;
+      # release.yml explains each of these settings.
+      - name: Use clang-cl for whisper.cpp
+        if: matrix.arch == 'aarch64'
+        shell: pwsh
+        run: |
+          $vs = & "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe" -latest -products * -property installationPath
+          cmd /c "`"$vs\VC\Auxiliary\Build\vcvarsall.bat`" arm64 >nul && set" | ForEach-Object {
+            $name, $value = $_ -split '=', 2
+            if ($name -ne 'VCPKG_ROOT' -and $value -ne [Environment]::GetEnvironmentVariable($name)) { "$name=$value" >> $env:GITHUB_ENV }
+          }
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          'CMAKE_GENERATOR=Ninja', 'CMAKE_C_COMPILER=clang-cl', 'CMAKE_CXX_COMPILER=clang-cl', 'CMAKE_CXX_FLAGS=-nologo /EHsc',
+            'GGML_CPU_ARM_ARCH=armv8.2-a+fp16+dotprod' >> $env:GITHUB_ENV
+      - run: cargo test --locked --features bundled-heif

@@ -1,0 +1,4 @@
+# The test documents and the text expected from them are compared byte for
+# byte, and some test line endings and encodings themselves, so Git must
+# never change them (it otherwise turns line endings into CRLF on Windows).
+assets/tests/documents/** -text

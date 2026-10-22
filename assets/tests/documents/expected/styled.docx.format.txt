@@ -1,0 +1,31 @@
+Bold, Quarterly report, end bold.
+
+Heading level 1. Summary
+
+Sales in, bold, Leicester, end bold, rose by, italic, colour red, 12%. End italic, end colour.
+
+List item. First point
+
+List item, level 2. Nested point
+
+Heading level 2. Details
+
+Table.
+
+Row 1.
+
+Region
+
+Total
+
+Row 2.
+
+North
+
+1,250
+
+End of table.
+
+Crossed out, Old figure, end crossed out, replaced; see, link, the website. End link.
+
+Comment kept out and tracked changes.

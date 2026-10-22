@@ -1,0 +1,3 @@
+UTF-16 text: café, naïve, 日本語.
+
+Second.
