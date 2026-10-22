@@ -141,9 +141,3 @@ pub fn become_background_reader(on_stop: impl FnOnce() + Send + 'static) -> anyh
 pub fn secret_store_description() -> &'static str {
     imp::SECRET_STORE_DESCRIPTION
 }
-
-/// Release packaging: an ad hoc signed `.app` on macOS, a `.deb` on Linux.
-#[cfg(not(target_os = "windows"))]
-pub fn package(out_dir: &std::path::Path) -> anyhow::Result<std::path::PathBuf> {
-    imp::package(out_dir)
-}

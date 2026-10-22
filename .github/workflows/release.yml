@@ -6,10 +6,10 @@
 # Requires the repository secret VT_API_KEY (a VirusTotal API key).
 #
 # Packaging:
-#   * macOS: `speechout --package-macos dist` (src/platform/macos.rs) builds the
+#   * macOS: `speechout --package-macos dist` (src/package/macos.rs) builds the
 #     .app bundle, signs it ad hoc and wraps it in an installer package (.pkg)
 #     that puts it in /Applications. The macos job tests installing it.
-#   * Linux: `speechout --package-deb dist` (src/platform/linux.rs) writes the .deb,
+#   * Linux: `speechout --package-deb dist` (src/package/linux.rs) writes the .deb,
 #     which the linux job renames to use hyphens instead of underscores.
 #   * Windows: a PowerShell step in the windows job stages the exe with the
 #     sherpa-onnx DLLs (speaker labelling) and the Visual C++ runtime DLLs it

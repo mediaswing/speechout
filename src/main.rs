@@ -10,6 +10,8 @@ mod document;
 mod i18n;
 mod logging;
 mod ollama;
+#[cfg(not(target_os = "windows"))]
+mod package;
 mod paths;
 mod platform;
 mod playlist;
@@ -76,7 +78,7 @@ fn main() -> ExitCode {
 #[cfg(not(target_os = "windows"))]
 fn package(dir: Option<&String>) -> ExitCode {
     let dir = std::path::PathBuf::from(dir.map(String::as_str).unwrap_or("dist"));
-    match platform::package(&dir) {
+    match package::build(&dir) {
         Ok(path) => {
             println!("{}", path.display());
             ExitCode::SUCCESS

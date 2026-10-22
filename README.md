@@ -503,8 +503,8 @@ speechout --package-macos dist   # macOS: installer package (.pkg) of the ad hoc
 speechout --package-deb dist     # Linux: .deb package
 ```
 
-The macOS package code lives in `src/platform/macos.rs` and the .deb builder in
-`src/platform/linux.rs`, next to the rest of each platform's code.
+The macOS package code lives in `src/package/macos.rs` and the .deb builder in
+`src/package/linux.rs`, apart from the code that runs when the app is used.
 
 On Windows, the release workflow gathers `speechout.exe` and its DLLs into a
 folder, then builds an MSI installer from them with
@@ -576,6 +576,7 @@ src/secrets.rs        API key storage
 src/settings.rs       Saved settings
 src/logging.rs        Debug log
 src/platform/         Platform-specific code: windows.rs, macos.rs, linux.rs
+src/package/          Release packaging: the macOS .pkg and the Linux .deb
 src/installer/        The Windows Installer package, built with WiX Toolset
 wordlists/            Example wordlists (built into the app)
 assets/fonts/         Google Sans fonts (built into the app) and their licence
