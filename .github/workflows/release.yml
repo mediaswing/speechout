@@ -400,6 +400,14 @@ jobs:
           version: 1
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2.9.2
+      # As on Windows, rust-cache empties target/sherpa-onnx-prebuilt before
+      # saving. Linking statically doesn't avoid that: a build restored from
+      # an older cache, as after Cargo.lock changes, rebuilds sherpa-onnx-sys
+      # without its libraries. So fetch them again here too.
+      - name: Fetch sherpa-onnx's libraries again
+        run: |
+          rm -rf target/sherpa-onnx-prebuilt
+          cargo clean --locked -p sherpa-onnx-sys
       - run: cargo test --locked
       - run: cargo build --release --locked
       - run: target/release/speechout --package-deb dist
@@ -427,6 +435,15 @@ jobs:
         with:
           targets: aarch64-apple-darwin
       - uses: Swatinem/rust-cache@v2.9.2
+      # As on Windows, rust-cache empties target/sherpa-onnx-prebuilt before
+      # saving. Linking statically doesn't avoid that: a build restored from
+      # an older cache, as after Cargo.lock changes, rebuilds sherpa-onnx-sys
+      # without its libraries. So fetch them again here too.
+      - name: Fetch sherpa-onnx's libraries again
+        run: |
+          rm -rf target/sherpa-onnx-prebuilt
+          cargo clean --locked -p sherpa-onnx-sys
+          cargo clean --locked -p sherpa-onnx-sys --target aarch64-apple-darwin
       - run: cargo test --locked
       - run: cargo build --release --locked --target aarch64-apple-darwin
       - run: target/aarch64-apple-darwin/release/speechout --package-macos dist

@@ -117,11 +117,17 @@ jobs:
             libgl1-mesa-dev libx11-dev libxcursor-dev libxrandr-dev libxi-dev
           version: 1
       - uses: dtolnay/rust-toolchain@stable
-      # sherpa-onnx is linked statically here, so its libraries are built into
-      # the cached build itself and need no fetching again, unlike on Windows.
       - uses: Swatinem/rust-cache@v2.9.2
         with:
           prefix-key: v1-rust-ci
+      # As on Windows, rust-cache empties target/sherpa-onnx-prebuilt before
+      # saving. Linking statically doesn't avoid that: a build restored from
+      # an older cache, as after Cargo.lock changes, rebuilds sherpa-onnx-sys
+      # without its libraries. So fetch them again here too.
+      - name: Fetch sherpa-onnx's libraries again
+        run: |
+          rm -rf target/sherpa-onnx-prebuilt
+          cargo clean --locked -p sherpa-onnx-sys
       # Among the tests, builds_valid_deb (src/package/linux.rs) packages the
       # test build and checks the .deb with dpkg-deb, which this runner has.
       - run: cargo test --locked
@@ -132,10 +138,17 @@ jobs:
     steps:
       - uses: actions/checkout@v7.0.1
       - uses: dtolnay/rust-toolchain@stable
-      # sherpa-onnx is linked statically here too.
       - uses: Swatinem/rust-cache@v2.9.2
         with:
           prefix-key: v1-rust-ci
+      # As on Windows, rust-cache empties target/sherpa-onnx-prebuilt before
+      # saving. Linking statically doesn't avoid that: a build restored from
+      # an older cache, as after Cargo.lock changes, rebuilds sherpa-onnx-sys
+      # without its libraries. So fetch them again here too.
+      - name: Fetch sherpa-onnx's libraries again
+        run: |
+          rm -rf target/sherpa-onnx-prebuilt
+          cargo clean --locked -p sherpa-onnx-sys
       - run: cargo test --locked
       # The tests' build of the app, packaged as the release job packages its
       # own. The bundle's signature and the installer's contents are checked,
