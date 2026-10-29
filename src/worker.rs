@@ -953,7 +953,7 @@ pub fn translate(rep: Reporter, control: Arc<Control>, language: Language, model
             if control.is_stopped() { Err(e) } else { i18n::translate_batch(&model, &language, batch) }
         });
         match result {
-            Ok(done) => translation.strings.extend(done),
+            Ok(done) => translation.add(done),
             Err(e) => {
                 failed_batches += 1;
                 // Every batch so far has failed: Ollama is probably not

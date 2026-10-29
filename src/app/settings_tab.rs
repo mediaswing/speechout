@@ -143,6 +143,13 @@ impl SpeechApp {
             .cloned()
     }
 
+    /// Uses `translation` for the interface text, or English if `None`,
+    /// including the names of keys in the sentences that name a shortcut.
+    fn use_translation(&self, translation: Option<&Translation>) {
+        i18n::activate(translation);
+        i18n::set_hints(self.keymap.hints());
+    }
+
     /// Switches the interface to the language at `index` in the list, if it
     /// has been translated. The arrow keys change the list straight away, so
     /// this never opens a dialog of its own.
@@ -152,13 +159,13 @@ impl SpeechApp {
         self.settings.save();
         let label = language.label();
         if language.code == i18n::ENGLISH_CODE {
-            i18n::activate(None);
+            self.use_translation(None);
             self.announce(tf("language.chosen", &[("language", &label)]));
             return;
         }
         let dir = crate::paths::languages_dir();
         if !i18n::file_for(&dir, &language.code).exists() {
-            i18n::activate(None);
+            self.use_translation(None);
             let button = tf("language.translate", &[("language", &label)]);
             self.announce(tf("language.not_yet", &[("language", &label), ("button", &button)]));
             return;
@@ -166,7 +173,7 @@ impl SpeechApp {
         match i18n::load(&dir, &language.code) {
             Ok(translation) => {
                 // Switch first, so the message is in the new language.
-                i18n::activate(Some(&translation));
+                self.use_translation(Some(&translation));
                 let missing = translation.missing().len();
                 self.announce(if missing == 0 {
                     tf("language.chosen", &[("language", &label)])
@@ -175,7 +182,7 @@ impl SpeechApp {
                 });
             }
             Err(e) => {
-                i18n::activate(None);
+                self.use_translation(None);
                 let error = format!("{e:#}");
                 self.announce(tf("language.load_failed", &[("language", &label), ("error", &error)]));
             }
@@ -211,10 +218,13 @@ impl SpeechApp {
                 // corrections, and start again.
                 if file.exists() {
                     log::warn!("translation {} is damaged, starting again: {e:#}", language.code);
-                    if let Err(e) = std::fs::rename(&file, file.with_extension("json.bak")) {
-                        let error = format!("{e:#}");
-                        self.show_error(tf("language.load_failed", &[("language", &language.label()), ("error", &error)]));
-                        return;
+                    match i18n::set_aside(&dir, &language.code) {
+                        Ok(backup) => log::info!("kept the damaged translation as {}", backup.display()),
+                        Err(e) => {
+                            let error = format!("{e:#}");
+                            self.show_error(tf("language.load_failed", &[("language", &language.label()), ("error", &error)]));
+                            return;
+                        }
                     }
                 }
                 Translation::new(&language)
@@ -231,7 +241,7 @@ impl SpeechApp {
             if !again {
                 return;
             }
-            translation.strings.clear();
+            translation.clear();
         }
         let control = Arc::new(Control::default());
         self.job = Some((JobKind::Translating, control.clone()));
@@ -247,7 +257,7 @@ impl SpeechApp {
                 // Use what was translated, even if the job was stopped part
                 // way, then report in the new language.
                 if self.settings.language == done.language.code {
-                    i18n::activate(Some(&done.translation));
+                    self.use_translation(Some(&done.translation));
                 }
                 let label = done.language.label();
                 if !done.stopped {

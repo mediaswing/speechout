@@ -402,6 +402,19 @@ const ENGLISH: &[(&str, &str)] = &[
     ("hint.stop", "Press {key} to stop."),
     ("hint.cancel", "Press {key} to cancel."),
     ("hint.help", "Press {key} to list the keyboard shortcuts."),
+    // Keys as they are said in those sentences, such as "Control+Full stop".
+    ("key_name.control", "Control"),
+    ("key_name.command", "Command"),
+    ("key_name.option", "Option"),
+    ("key_name.alt", "Alt"),
+    ("key_name.shift", "Shift"),
+    ("key_name.escape", "Escape"),
+    ("key_name.full_stop", "Full stop"),
+    ("key_name.return", "Return"),
+    ("key_name.enter", "Enter"),
+    ("key_name.tab", "Tab"),
+    ("key_name.page_up", "Page Up"),
+    ("key_name.page_down", "Page Down"),
     ("settings.log_folder", "Debug log folder"),
     ("settings.choose_log", "Choose the debug log folder…"),
     ("settings.log_dialog", "Choose where to save debug logs"),
@@ -734,6 +747,9 @@ pub fn set_hints(hints: Vec<Hint>) {
     *HINTS.write().unwrap_or_else(|e| e.into_inner()) = Some(hints);
 }
 
+/// The hints for the default shortcuts, used where `set_hints` is never
+/// called (reading in the background). The key names are in the language in
+/// use the first time they are needed, so a language must be chosen first.
 fn default_hints() -> &'static [Hint] {
     static DEFAULTS: OnceLock<Vec<Hint>> = OnceLock::new();
     DEFAULTS.get_or_init(|| {
@@ -750,9 +766,20 @@ pub fn t(key: &str) -> String {
 /// The text for `key` in the language in use, with each `{name}` replaced by
 /// its value from `args`.
 pub fn tf(key: &str, args: &[(&str, &dyn Display)]) -> String {
-    let active = ACTIVE.read().unwrap_or_else(|e| e.into_inner());
     let hints = HINTS.read().unwrap_or_else(|e| e.into_inner());
-    render(active.as_ref(), hints.as_deref().unwrap_or_else(|| default_hints()), key, args)
+    // Working out the default hints says key names with `plain`, which reads
+    // ACTIVE, so it is done before ACTIVE is locked here.
+    let hints = hints.as_deref().unwrap_or_else(|| default_hints());
+    let active = ACTIVE.read().unwrap_or_else(|e| e.into_inner());
+    render(active.as_ref(), hints, key, args)
+}
+
+/// The text for `key` in the language in use, as it is, for text with no
+/// `{name}` values. Unlike `t`, it never looks at the key hints, so the hints
+/// can use it.
+pub fn plain(key: &str) -> String {
+    let active = ACTIVE.read().unwrap_or_else(|e| e.into_inner());
+    template(active.as_ref(), key).to_owned()
 }
 
 fn render(
@@ -845,14 +872,29 @@ fn is_hidden_char(c: char) -> bool {
 /// Whether a translation of `key` can be used: it is not empty or
 /// unreasonably long, has no hidden characters, only has line breaks where
 /// the English does, and has the same `{name}` values as the English.
+/// Space at either end is ignored, as it is trimmed before use.
 fn fits(key: &str, text: &str) -> bool {
-    let Some(en) = english(key) else { return false };
+    unfit(key, text).is_none()
+}
+
+/// Why a translation of `key` can't be used, or `None` if it can.
+fn unfit(key: &str, text: &str) -> Option<&'static str> {
+    let Some(en) = english(key) else { return Some("unknown key") };
+    let text = text.trim();
     let limit = en.chars().count() * 4 + 40;
-    !text.trim().is_empty()
-        && text.chars().count() <= limit
-        && !text.chars().any(is_hidden_char)
-        && (en.contains('\n') || !text.contains('\n'))
-        && placeholders(en) == placeholders(text)
+    if text.is_empty() {
+        Some("empty")
+    } else if text.chars().count() > limit {
+        Some("too long")
+    } else if text.chars().any(is_hidden_char) {
+        Some("hidden characters")
+    } else if !en.contains('\n') && text.contains('\n') {
+        Some("line break added")
+    } else if placeholders(en) != placeholders(text) {
+        Some("placeholders changed")
+    } else {
+        None
+    }
 }
 
 /// A language name from a translation file, if it is safe to show.
@@ -894,6 +936,20 @@ pub struct Translation {
     /// The AI model that made the translation, if any.
     pub made_with: String,
     pub strings: BTreeMap<String, String>,
+    /// Keys the AI model has handed back in English once. Small models
+    /// sometimes do that rather than translate, so the first time is not
+    /// trusted; the second time, the English is taken as the translation,
+    /// as some text (such as "Pause" in French) is the same in both.
+    pub came_back_in_english: BTreeSet<String>,
+}
+
+/// What the AI model made of one batch of keys.
+#[derive(Debug, Default)]
+pub struct Batch {
+    /// Translations that can be used.
+    pub translated: BTreeMap<String, String>,
+    /// Keys whose text came back in English.
+    pub in_english: Vec<String>,
 }
 
 impl Translation {
@@ -920,8 +976,33 @@ impl Translation {
         self.strings
             .iter()
             .filter(|(key, text)| fits(key, text))
-            .map(|(key, text)| (key.clone(), text.clone()))
+            .map(|(key, text)| (key.clone(), text.trim().to_owned()))
             .collect()
+    }
+
+    /// Adds what the AI model made of a batch. A key that comes back in
+    /// English for the second time keeps its English text as the
+    /// translation, so it is not tried again and again.
+    pub fn add(&mut self, batch: Batch) {
+        for (key, text) in batch.translated {
+            self.came_back_in_english.remove(&key);
+            self.strings.insert(key, text);
+        }
+        for key in batch.in_english {
+            if self.came_back_in_english.remove(&key) {
+                if let Some(en) = english(&key) {
+                    self.strings.insert(key, en.to_owned());
+                }
+            } else {
+                self.came_back_in_english.insert(key);
+            }
+        }
+    }
+
+    /// Forgets every translation, to translate it all again.
+    pub fn clear(&mut self) {
+        self.strings.clear();
+        self.came_back_in_english.clear();
     }
 }
 
@@ -956,6 +1037,23 @@ pub fn save(dir: &Path, code: &str, translation: &Translation) -> anyhow::Result
     // half-written translation, and a link in its place is replaced rather
     // than followed.
     crate::paths::write_private_file(&file_for(dir, code), &json).context("the translation could not be saved")
+}
+
+/// Moves a damaged translation file out of the way, so it can be made again
+/// without losing someone's corrections. It becomes `{code}.json.bak`, or
+/// `.bak2`, `.bak3` and so on, so an earlier backup is never overwritten.
+/// Returns where it went.
+pub fn set_aside(dir: &Path, code: &str) -> anyhow::Result<PathBuf> {
+    if !valid_code(code) {
+        bail!("\"{code}\" is not a language code");
+    }
+    let file = file_for(dir, code);
+    let backup = (1..=1000)
+        .map(|n| file.with_extension(if n == 1 { "json.bak".to_owned() } else { format!("json.bak{n}") }))
+        .find(|path| !path.exists() && path.symlink_metadata().is_err())
+        .context("there are too many old copies of the translation")?;
+    std::fs::rename(&file, &backup).context("the damaged translation could not be moved aside")?;
+    Ok(backup)
 }
 
 /// The languages to offer: English, the built-in list, and any other
@@ -1032,6 +1130,8 @@ fn prompt(language: &Language, batch: &BTreeMap<&str, &str>) -> String {
          - Keep these unchanged: key names such as Ctrl, Cmd, Esc, Escape, Tab, F5, F6 and F7; product names such as \
            Ollama, ElevenLabs, OpenAI, Deepgram, Speechify, OpenStreetMap and GitHub; and file types such as PDF, \
            TXT, MD, DOCX, ODT, CSV, ODS, PPTX, PPT, EPUB, JPEG, PNG, JPEG XL, HEIC, XML, MP3 and WAV.\n\
+         - But a value whose key starts with key_name. is the name of a key on the keyboard, such as Escape or \
+           Full stop. Give the name a screen reader in that language says for the key.\n\
          - Keep line breaks, quotation marks and the … character where the English has them.\n\
          - Use plain, everyday words, and the form of address usual for software in that language.\n\
          - Translate every value, even short ones.\n\n\
@@ -1043,25 +1143,36 @@ fn prompt(language: &Language, batch: &BTreeMap<&str, &str>) -> String {
 
 /// Translates one batch of keys with the Ollama model `model`. Returns the
 /// translations that can be used; any the model got wrong are left out.
-pub fn translate_batch(model: &str, language: &Language, keys: &[&'static str]) -> anyhow::Result<BTreeMap<String, String>> {
+pub fn translate_batch(model: &str, language: &Language, keys: &[&'static str]) -> anyhow::Result<Batch> {
     let batch: BTreeMap<&str, &str> = keys.iter().filter_map(|k| Some((*k, english(k)?))).collect();
     let reply = crate::ollama::generate(model, &prompt(language, &batch), Some(json!("json")))?;
     let reply: Value = serde_json::from_str(reply.trim()).context("the AI model did not reply with a translation")?;
     let Some(reply) = reply.as_object() else { bail!("the AI model did not reply with a translation") };
-    let mut out = BTreeMap::new();
+    Ok(read_reply(reply, keys))
+}
+
+/// Sorts the model's reply for `keys` into usable translations and text that
+/// came back in English. The rest is left out.
+fn read_reply(reply: &serde_json::Map<String, Value>, keys: &[&'static str]) -> Batch {
+    let mut out = Batch::default();
     for key in keys {
-        match reply.get(*key).and_then(Value::as_str) {
-            // Small models sometimes hand the English back. Leaving it out
-            // shows the same text, and lets the next run try it again.
-            Some(text) if english(key) == Some(text.trim()) => log::info!("{key} came back untranslated"),
-            Some(text) if fits(key, text) => {
-                out.insert((*key).to_owned(), text.trim().to_owned());
-            }
-            Some(_) => log::info!("translation of {key} dropped: placeholders changed"),
-            None => log::info!("translation of {key} missing from the reply"),
+        let Some(text) = reply.get(*key).and_then(Value::as_str) else {
+            log::info!("translation of {key} missing from the reply");
+            continue;
+        };
+        let text = text.trim();
+        if english(key) == Some(text) {
+            // Small models sometimes hand the English back. See
+            // `Translation::add`.
+            log::info!("{key} came back in English");
+            out.in_english.push((*key).to_owned());
+        } else if let Some(why) = unfit(key, text) {
+            log::info!("translation of {key} dropped: {why}");
+        } else {
+            out.translated.insert((*key).to_owned(), text.to_owned());
         }
     }
-    Ok(out)
+    out
 }
 
 #[cfg(test)]
@@ -1224,11 +1335,30 @@ mod tests {
         assert!(!fits("general.voice", "Vo\u{7}ix"));
         assert!(!fits("general.voice", "Vo\nix"));
         assert!(!fits("general.voice", &"x".repeat(100)));
+        assert_eq!(unfit("file.opening", "Ouverture de {nom}."), Some("placeholders changed"));
+        assert_eq!(unfit("general.voice", "Vo\nix"), Some("line break added"));
         // A line break is fine where the English has one.
         assert!(fits("update.question", "{version} {app} {current}\n\n?"));
         assert_eq!(clean_name("  Esperanto "), Some("Esperanto".into()));
         assert_eq!(clean_name("Esper\u{202e}anto"), None);
         assert_eq!(clean_name(&"x".repeat(61)), None);
+    }
+
+    #[test]
+    fn damaged_files_are_set_aside_without_losing_older_copies() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = file_for(dir.path(), "fr");
+        for (n, text) in [(1, "first"), (2, "second"), (3, "third")] {
+            std::fs::write(&file, text).unwrap();
+            let backup = set_aside(dir.path(), "fr").unwrap();
+            let name = if n == 1 { "fr.json.bak".to_owned() } else { format!("fr.json.bak{n}") };
+            assert_eq!(backup, dir.path().join(name));
+            assert_eq!(std::fs::read_to_string(&backup).unwrap(), text);
+            assert!(!file.exists());
+        }
+        // Backups are not offered as languages.
+        assert!(available(dir.path()).iter().all(|l| !l.code.starts_with("fr.")));
+        assert!(set_aside(dir.path(), "../fr").is_err());
     }
 
     #[test]
@@ -1238,6 +1368,47 @@ mod tests {
         std::fs::write(file_for(dir.path(), "xx"), big).unwrap();
         assert!(load(dir.path(), "xx").is_err());
         assert!(available(dir.path()).iter().all(|l| l.code != "xx"));
+    }
+
+    #[test]
+    fn space_at_the_ends_is_trimmed() {
+        // A model that ends a value with a line break still gets it used.
+        assert!(fits("general.voice", "Voix\n"));
+        let reply = json!({"general.voice": " Voix\n", "general.speed": "Vitesse\nde parole"});
+        let batch = read_reply(reply.as_object().unwrap(), &["general.voice", "general.speed"]);
+        assert_eq!(batch.translated, BTreeMap::from([("general.voice".into(), "Voix".into())]));
+        // So does a hand-edited file.
+        let mut t = Translation::default();
+        t.strings.insert("general.voice".into(), "  Voix ".into());
+        assert_eq!(t.usable()["general.voice"], "Voix");
+    }
+
+    #[test]
+    fn english_is_kept_the_second_time_it_comes_back() {
+        // "Pause" is the same in French, so the model rightly hands it back.
+        let reply = json!({"general.pause": "Pause{shortcut} ", "general.voice": "Voix"});
+        let keys = ["general.pause", "general.voice"];
+        let mut t = Translation::default();
+        t.add(read_reply(reply.as_object().unwrap(), &keys));
+        assert_eq!(t.strings.get("general.voice").map(String::as_str), Some("Voix"));
+        assert!(t.missing().contains(&"general.pause"), "the first time is not trusted");
+
+        // Saved and loaded between runs, it is remembered.
+        let dir = tempfile::tempdir().unwrap();
+        save(dir.path(), "fr", &t).unwrap();
+        let mut t = load(dir.path(), "fr").unwrap();
+        t.add(read_reply(reply.as_object().unwrap(), &keys[..1]));
+        assert_eq!(t.strings["general.pause"], "Pause{shortcut}");
+        assert!(!t.missing().contains(&"general.pause"));
+        assert!(t.came_back_in_english.is_empty());
+
+        // A real translation after the first English reply replaces it.
+        let mut t = Translation::default();
+        t.add(Batch { in_english: vec!["general.voice".into()], ..Batch::default() });
+        t.add(Batch { translated: BTreeMap::from([("general.voice".into(), "Voix".into())]), ..Batch::default() });
+        assert!(t.came_back_in_english.is_empty());
+        t.clear();
+        assert!(t.strings.is_empty());
     }
 
     #[test]
@@ -1256,7 +1427,7 @@ mod tests {
         let model = std::env::var("SPEECHOUT_OLLAMA_MODEL").unwrap_or_else(|_| "gemma3:4b".into());
         let fr = Language { code: "fr".into(), name: "Français".into(), english_name: "French".into() };
         let keys: Vec<&str> = ENGLISH.iter().map(|(k, _)| *k).take(BATCH_SIZE).collect();
-        let done = translate_batch(&model, &fr, &keys).unwrap();
+        let done = translate_batch(&model, &fr, &keys).unwrap().translated;
         for (key, text) in &done {
             println!("{key}: {text}");
         }
@@ -1271,5 +1442,6 @@ mod tests {
         assert!(p.contains("such as {name} or {count}"));
         assert!(p.contains("French (Français)"));
         assert!(p.contains("\"file.opening\": \"Opening {name}.\""));
+        assert!(p.contains("key starts with key_name."));
     }
 }

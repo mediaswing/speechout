@@ -1,5 +1,17 @@
 # Changelog
 
+## [Unreleased]
+
+### Changed
+
+- In a translated app, the sentences that tell you which key to press now say the key's name in that language too, such as "Échap" for Escape in French, as your screen reader would. Letters, numbers and function keys stay as they are, and buttons still show the keys as they're printed on the keyboard. Translations you already have keep working: translate again to add the key names, which stay in English until then.
+
+### Fixed
+
+- Translating the app no longer keeps reporting text it "could not translate" when the right translation is the same as the English, such as "Pause" in French and German. That text is now kept when the AI model gives the same answer a second time, so translating again finishes the job.
+- A translation that the AI model ended with a stray line break is no longer thrown away.
+- When a damaged translation file is set aside to make a new one, an earlier copy that was set aside is no longer overwritten. Copies are kept as `.json.bak`, `.json.bak2` and so on.
+
 ## [3.6.0] - 2026-10-29
 
 ### Added

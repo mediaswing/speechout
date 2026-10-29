@@ -128,43 +128,43 @@ impl Shortcut {
 
     /// As shown on buttons and lists, such as "Ctrl+O" or "Esc".
     pub fn short(self, platform: Platform) -> String {
-        self.describe(platform, false)
+        self.describe(platform, None)
     }
 
-    /// As said in spoken messages, such as "Control+O" or "Escape".
+    /// As said in spoken messages, such as "Control+O" or "Escape", in the
+    /// language in use.
     pub fn spoken(self, platform: Platform) -> String {
-        self.describe(platform, true)
+        self.describe(platform, Some(&i18n::plain))
     }
 
-    fn describe(self, platform: Platform, spoken: bool) -> String {
+    /// The shortcut as shown, or, with `say`, as said, with each key's name
+    /// the text `say` gives for its `key_name.` key.
+    fn describe(self, platform: Platform, say: Option<&dyn Fn(&str) -> String>) -> String {
         let mac = platform == Platform::Mac;
+        // What is shown matches the keyboard.
+        let word = |key: &str, shown: &'static str| say.map_or_else(|| shown.to_owned(), |say| say(key));
         let mut parts = Vec::new();
         if self.mods.ctrl {
-            parts.push(if spoken { "Control" } else { "Ctrl" });
+            parts.push(word("key_name.control", "Ctrl"));
         }
         if self.mods.command {
-            parts.push(match (mac, spoken) {
-                (true, true) => "Command",
-                (true, false) => "Cmd",
-                (false, true) => "Control",
-                (false, false) => "Ctrl",
-            });
+            parts.push(if mac { word("key_name.command", "Cmd") } else { word("key_name.control", "Ctrl") });
         }
         if self.mods.alt {
-            parts.push(if mac { "Option" } else { "Alt" });
+            parts.push(if mac { word("key_name.option", "Option") } else { word("key_name.alt", "Alt") });
         }
         if self.mods.shift {
-            parts.push("Shift");
+            parts.push(word("key_name.shift", "Shift"));
         }
         parts.push(match self.key {
-            Key::Escape if spoken => "Escape",
-            Key::Escape => "Esc",
-            Key::Period if spoken => "Full stop",
-            Key::Period => ".",
-            Key::Enter if mac => "Return",
-            Key::PageUp => "Page Up",
-            Key::PageDown => "Page Down",
-            key => key.name(),
+            Key::Escape => word("key_name.escape", "Esc"),
+            Key::Period => word("key_name.full_stop", "."),
+            Key::Enter if mac => word("key_name.return", "Return"),
+            Key::Enter => word("key_name.enter", "Enter"),
+            Key::Tab => word("key_name.tab", "Tab"),
+            Key::PageUp => word("key_name.page_up", "Page Up"),
+            Key::PageDown => word("key_name.page_down", "Page Down"),
+            key => key.name().to_owned(),
         });
         parts.join("+")
     }
@@ -927,6 +927,54 @@ mod tests {
         assert_eq!(Shortcut::command(Key::Period).spoken(m), "Command+Full stop");
         let map = keymap(w);
         assert_eq!(map.describe(Action::GoToTab, Shortcut::command(Key::Num1)), "Ctrl+1 – Ctrl+5");
+    }
+
+    #[test]
+    fn key_names_are_said_in_the_language_in_use() {
+        let fr = BTreeMap::from([
+            ("key_name.command", "Commande"),
+            ("key_name.control", "Contrôle"),
+            ("key_name.shift", "Maj"),
+            ("key_name.full_stop", "Point"),
+            ("key_name.escape", "Échap"),
+            ("key_name.tab", "Tabulation"),
+        ]);
+        let say = |key: &str| fr.get(key).map_or_else(|| i18n::english(key).unwrap().to_owned(), |s| (*s).to_owned());
+        let said = |s: Shortcut, p| s.describe(p, Some(&say));
+        let (w, m) = (Platform::Windows, Platform::Mac);
+        assert_eq!(said(Shortcut::command(Key::Period), m), "Commande+Point");
+        assert_eq!(said(Shortcut::key(Key::Escape), w), "Échap");
+        assert_eq!(said(Shortcut::ctrl(Key::Tab, true, m), m), "Contrôle+Maj+Tabulation");
+        assert_eq!(said(Shortcut::ctrl(Key::PageDown, false, w), w), "Contrôle+Page Down");
+        // Letters, numbers and function keys stay as they are.
+        assert_eq!(said(Shortcut::command(Key::O), w), "Contrôle+O");
+        assert_eq!(said(Shortcut::key(Key::F5), w), "F5");
+        // What is shown is not translated.
+        assert_eq!(Shortcut::command(Key::Period).short(m), "Cmd+.");
+    }
+
+    #[test]
+    fn every_key_that_can_be_chosen_has_a_spoken_name() {
+        // A shortcut's words must all come from the catalogue, so none is
+        // left in English in a translation.
+        for p in Platform::ALL {
+            for action in Action::ALL {
+                for s in action.choices(p).into_iter().chain(action.default_shortcut(p)) {
+                    let words = std::cell::RefCell::new(Vec::new());
+                    s.describe(p, Some(&|key: &str| {
+                        assert!(i18n::english(key).is_some(), "no English text for {key}");
+                        words.borrow_mut().push(key.to_owned());
+                        String::new()
+                    }));
+                    let words = words.into_inner();
+                    let named = (s.mods.ctrl as usize) + (s.mods.command as usize) + (s.mods.alt as usize)
+                        + (s.mods.shift as usize);
+                    let plain_key = s.key.name().chars().count() == 1
+                        || s.key.name().starts_with('F') && s.key.name().len() <= 3;
+                    assert_eq!(words.len(), named + usize::from(!plain_key), "{} on {p:?}", s.short(p));
+                }
+            }
+        }
     }
 
     #[test]
