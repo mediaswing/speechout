@@ -575,7 +575,8 @@ src/speech/           System and cloud voices
 src/audio.rs          Decoding, playback, WAV and MP3 export, and the speech check
 src/playlist.rs       Zip files of audio played as playlists
 src/document/         Text extraction, one file per format: PDF, TXT, Markdown, DOCX,
-                      ODT and ODS, CSV, PPTX, PPT and EPUB
+                      ODT and ODS, CSV, PPTX, PPT, EPUB and web pages
+src/web.rs            Downloading web pages for the Web Reader
 src/vision.rs         Photo descriptions, GPS and place names
 src/ollama.rs         Talking to Ollama, the local AI model server
 src/video.rs          Taking keyframes out of a video with ffmpeg, and decoding WMA
