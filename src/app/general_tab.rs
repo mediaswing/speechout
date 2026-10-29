@@ -1,5 +1,5 @@
-//! The General tab: choosing a document or pasting text, the voice, and
-//! reading it aloud or saving it as audio.
+//! The General tab: choosing a document, pasting text or reading a web page,
+//! the voice, and reading it aloud or saving it as audio.
 
 use super::*;
 
@@ -12,17 +12,30 @@ const PREVIEW_TEXT: &str = "This is a preview of the selected voice.";
 pub(super) enum Source {
     File,
     Paste,
+    Web,
 }
 
 impl Source {
-    const ALL: [Source; 2] = [Source::File, Source::Paste];
+    const ALL: [Source; 3] = [Source::File, Source::Paste, Source::Web];
 
     fn label(self) -> String {
         match self {
             Source::File => t("general.source_file"),
             Source::Paste => t("general.source_paste"),
+            Source::Web => t("general.source_web"),
         }
     }
+}
+
+/// A web page's title made fit to name a file after: without the characters
+/// file names can't have, and not too long.
+fn file_stem_from_title(title: &str) -> String {
+    let stem: String = title
+        .chars()
+        .map(|c| if matches!(c, '/' | '\\' | ':' | '*' | '?' | '"' | '<' | '>' | '|') || c.is_control() { ' ' } else { c })
+        .take(100)
+        .collect();
+    stem.split_whitespace().collect::<Vec<_>>().join(" ").trim_end_matches(['.', ' ']).to_owned()
 }
 
 impl SpeechApp {
@@ -35,6 +48,7 @@ impl SpeechApp {
         match self.source {
             Source::File => &self.text,
             Source::Paste => &self.pasted_text,
+            Source::Web => &self.web_text,
         }
     }
 
@@ -135,6 +149,41 @@ impl SpeechApp {
         }
     }
 
+    /// Downloads the page in the address box and takes out its article.
+    fn get_page(&mut self) {
+        if self.loading_page || self.is_busy() {
+            return;
+        }
+        let url = match crate::web::parse_address(&self.web_address) {
+            Ok(url) => url,
+            Err(e) => {
+                self.show_error(tf("web.bad_address", &[("error", &worker::err(e))]));
+                return;
+            }
+        };
+        self.loading_page = true;
+        let site = url.host_str().unwrap_or_default().trim_start_matches("www.").to_owned();
+        self.announce(tf("web.getting", &[("site", &site)]));
+        let address = self.web_address.clone();
+        self.rep.spawn(move |rep| worker::load_page(rep, address));
+    }
+
+    /// The web page has been read, or couldn't be.
+    pub(super) fn page_loaded(&mut self, result: Result<crate::document::WebArticle, String>) {
+        self.loading_page = false;
+        match result {
+            Ok(article) => {
+                let words = article.text.split_whitespace().count();
+                self.web_title = article.title;
+                self.web_text = article.text;
+                let title = if self.web_title.is_empty() { t("web.untitled") } else { self.web_title.clone() };
+                self.announce(tf("web.loaded", &[("title", &title), ("count", &words)]));
+                self.cue(Cue::Success);
+            }
+            Err(e) => self.show_error(tf("web.failed", &[("error", &e)])),
+        }
+    }
+
     pub(super) fn choose_file(&mut self) {
         if self.loading_file || self.preparing_video() {
             return;
@@ -201,6 +250,7 @@ impl SpeechApp {
                 _ if self.tab == Tab::Video => t("video.nothing"),
                 Source::File => t("read.nothing"),
                 Source::Paste => t("read.nothing_pasted"),
+                Source::Web => t("read.nothing_web"),
             };
             self.announce(msg);
             return None;
@@ -319,15 +369,17 @@ impl SpeechApp {
         let file = match self.source {
             _ if on_video => self.video.file.as_ref(),
             Source::File => self.file.as_ref(),
-            Source::Paste => None,
+            Source::Paste | Source::Web => None,
         };
-        // The document's name, which the saved file is named after and which
-        // its tags give as the album.
-        let album = file
-            .and_then(|f| f.file_stem())
-            .map(|s| s.to_string_lossy().into_owned())
-            .unwrap_or_default();
-        let stem = if album.is_empty() { t("save.default_name") } else { album.clone() };
+        // The document's name, or the web page's title, which the saved file
+        // is named after and which its tags give as the album.
+        let album = match file {
+            Some(f) => f.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default(),
+            None if self.source == Source::Web && !on_video => self.web_title.clone(),
+            None => String::new(),
+        };
+        let stem = file_stem_from_title(&album);
+        let stem = if stem.is_empty() { t("save.default_name") } else { stem };
         let Some(mut path) = rfd::FileDialog::new()
             .set_title(t("save.dialog_title"))
             .set_file_name(format!("{stem}.{}", format.extension()))
@@ -381,6 +433,7 @@ impl SpeechApp {
             self.announce(match self.source {
                 Source::File => t("general.source_chosen_file"),
                 Source::Paste => t("general.source_chosen_paste"),
+                Source::Web => t("general.source_chosen_web"),
             });
         }
 
@@ -417,6 +470,32 @@ impl SpeechApp {
                         self.announce(tf("general.pasted_full", &[("count", &count)]));
                     }
                 }
+            }
+            Source::Web => {
+                let enabled = !self.loading_page && !self.is_busy();
+                let resp = text_field(ui, &t("general.web_address"), &mut self.web_address, enabled);
+                // Enter in the address box gets the page, as in a browser. egui
+                // takes focus out of the box on Enter, which would leave a
+                // screen reader user nowhere, so it goes straight back.
+                if resp.lost_focus() && ui.input(|i| i.key_pressed(Key::Enter)) {
+                    resp.request_focus();
+                    if self.web_address.trim().is_empty() {
+                        self.announce(t("read.nothing_web"));
+                    } else {
+                        self.get_page();
+                    }
+                }
+                let can_get = enabled && !self.web_address.trim().is_empty();
+                if full_button(ui, &t("general.get_page"), can_get).clicked() {
+                    self.get_page();
+                }
+                let mut page_text = match (self.loading_page, self.web_title.as_str(), self.web_text.is_empty()) {
+                    (true, ..) => t("general.loading"),
+                    (false, _, true) => t("general.no_page"),
+                    (false, "", false) => t("web.untitled"),
+                    (false, title, false) => title.to_owned(),
+                };
+                text_field(ui, &t("general.current_page"), &mut page_text, false);
             }
         }
 

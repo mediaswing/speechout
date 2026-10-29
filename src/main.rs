@@ -25,6 +25,7 @@ mod transcribe;
 mod update;
 mod video;
 mod vision;
+mod web;
 mod wordlist;
 mod worker;
 

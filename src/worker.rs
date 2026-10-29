@@ -19,6 +19,8 @@ pub enum Msg {
     Voices(Provider, Result<Vec<Voice>, String>),
     Models(Result<Vec<String>, String>),
     Loaded(PathBuf, Result<LoadedFile, String>),
+    /// A web page was downloaded and its article taken out, for the Web Reader.
+    PageLoaded(Result<crate::document::WebArticle, String>),
     /// Downloading a model finished: true if complete, false if stopped.
     ModelDownloaded(String, Result<bool, String>),
     /// Installing and/or starting Ollama finished.
@@ -108,7 +110,7 @@ fn contain<T>(work: impl FnOnce() -> anyhow::Result<T>) -> anyhow::Result<T> {
 
 /// The user sees the friendly top-level message; the technical cause chain
 /// goes to the debug log.
-fn err(e: anyhow::Error) -> String {
+pub fn err(e: anyhow::Error) -> String {
     log::warn!("{e:#}");
     let mut text = e.to_string();
     if let Some(first) = text.chars().next() {
@@ -277,6 +279,17 @@ pub fn read_file(
             .map(|text| LoadedFile { text, system_voices_only: false, vision_model: None }),
     });
     result.map_err(err)
+}
+
+/// Downloads the web page at `address`, as typed, and takes out its article.
+/// The address is left out of the debug log, which only says how it went.
+pub fn load_page(rep: Reporter, address: String) {
+    log::info!("reading a web page");
+    let result = contain(|| {
+        let page = crate::web::fetch(crate::web::parse_address(&address)?)?;
+        crate::document::read_web_page(&page.html, page.url.as_str(), page.charset.as_deref())
+    });
+    rep.send(Msg::PageLoaded(result.map_err(err)));
 }
 
 pub struct SpeechJob {

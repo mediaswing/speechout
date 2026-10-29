@@ -66,6 +66,7 @@ const ENGLISH: &[(&str, &str)] = &[
     ("progress.setting_up_ffmpeg", "Still installing ffmpeg."),
     ("progress.setting_up", "Still setting up Ollama."),
     ("progress.opening", "Still opening the file."),
+    ("progress.getting_page", "Still getting the web page."),
     ("progress.nothing", "Nothing is playing."),
     // Progress bar
     ("bar.label", "Progress"),
@@ -82,6 +83,7 @@ const ENGLISH: &[(&str, &str)] = &[
     ("bar.audio_paused", "Audio file paused: {percent}%"),
     ("bar.setting_up", "Setting up Ollama…"),
     ("bar.opening", "Opening the file…"),
+    ("bar.getting_page", "Getting the web page…"),
     ("bar.nothing", "Nothing playing"),
     // Clipboard
     ("copy.nothing", "There is no text to copy yet."),
@@ -188,6 +190,7 @@ const ENGLISH: &[(&str, &str)] = &[
     // Reading aloud and saving
     ("read.nothing", "There is nothing to read yet.{open_hint}"),
     ("read.nothing_pasted", "There is nothing to read yet. Type or paste text into the box."),
+    ("read.nothing_web", "There is nothing to read yet. Type or paste the address of a web page, then choose Get text from the page."),
     ("read.started", "Reading aloud.{pause_hint}{stop_hint}"),
     ("read.stopped", "Stopped reading."),
     ("read.finished", "Finished reading."),
@@ -237,10 +240,26 @@ const ENGLISH: &[(&str, &str)] = &[
     ("general.source", "Text to read"),
     ("general.source_file", "Choose File"),
     ("general.source_paste", "Paste Text"),
+    ("general.source_web", "Web Reader"),
     ("general.source_chosen_file", "Choose File.{open_hint}"),
     ("general.source_chosen_paste", "Paste Text. Type or paste text into the box.{read_hint}"),
+    ("general.source_chosen_web", "Web Reader. Type or paste the address of a web page, then press Enter."),
     ("general.pasted", "Text"),
     ("general.pasted_full", "The text box is full. It holds up to {count} characters."),
+    ("general.web_address", "Web address"),
+    ("general.get_page", "Get text from the page"),
+    ("general.current_page", "Current page"),
+    ("general.no_page", "No page loaded"),
+    // Web Reader
+    ("web.getting", "Getting the page from {site}."),
+    ("web.loaded", "Loaded {title}, {count} words.{read_hint}{save_hint}"),
+    ("web.untitled", "Untitled page"),
+    ("web.bad_address", "The page could not be read. {error}"),
+    (
+        "web.failed",
+        "The page could not be read. {error} You can copy the text from your web browser and read it with Paste Text \
+         instead.",
+    ),
     ("general.service", "Speech service"),
     ("general.service_chosen", "Speech service: {service}. {note}"),
     ("general.service_locked", "PNG images are usually screenshots, which can show private details, so they are read with the system voices."),

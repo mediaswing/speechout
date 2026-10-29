@@ -1,5 +1,11 @@
 # Changelog
 
+## [Unreleased]
+
+### Added
+
+- A new Web Reader choice under "Text to read" reads the article on a web page. Type or paste the page's address and press Enter, or choose "Get text from the page". The app downloads the page and reads the headline and then the article, leaving out menus, adverts, related stories, image credits and embedded social media posts. Your computer fetches the page directly from the site, without cookies, and only the page itself, so its images, scripts and trackers never load. Only secure (https) pages on the internet can be read. If a page can't be read, for example because the site only sends its pages to web browsers, a message says so and suggests copying the text into Paste Text instead. Audio saved from a web page is named after its headline.
+
 ## [3.5.0] - 2026-10-22
 
 ### Added

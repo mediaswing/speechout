@@ -309,6 +309,34 @@ mod tests {
         frame(ctx, vec![], ui_fn);
     }
 
+    /// The Web Reader's address box keeps focus after Enter, as the General
+    /// tab asks, and while it is read-only as the page loads.
+    #[test]
+    fn text_field_can_keep_focus_after_enter() {
+        let ctx = egui::Context::default();
+        let mut value = String::from("bbc.co.uk");
+        let editable = std::cell::Cell::new(true);
+        let entered = std::cell::Cell::new(0);
+        let mut ui_fn = |ui: &mut Ui| {
+            let resp = text_field(ui, "Web address", &mut value, editable.get());
+            if resp.lost_focus() && ui.input(|i| i.key_pressed(Key::Enter)) {
+                resp.request_focus();
+                entered.set(entered.get() + 1);
+            }
+        };
+        frame(&ctx, vec![], &mut ui_fn);
+        tab(&ctx, &mut ui_fn);
+        let field = focused(&ctx).expect("Tab moves focus to the box");
+        frame(&ctx, vec![press(Key::Enter, Modifiers::NONE)], &mut ui_fn);
+        frame(&ctx, vec![], &mut ui_fn);
+        assert_eq!(focused(&ctx), Some(field), "focus stays in the box after Enter");
+        editable.set(false);
+        frame(&ctx, vec![], &mut ui_fn);
+        frame(&ctx, vec![], &mut ui_fn);
+        assert_eq!(focused(&ctx), Some(field), "focus stays while the box is read-only");
+        assert_eq!(entered.get(), 1);
+    }
+
     #[test]
     fn dropdown_keys() {
         let ctx = egui::Context::default();

@@ -12,6 +12,9 @@ The program file is called `speechout`.
 - **Reads PDF, TXT, Markdown, DOCX, ODT, CSV, ODS, PPTX, PPT and EPUB files aloud** with the
   voices built into your computer, or with cloud voices from **ElevenLabs**, **OpenAI**, **Deepgram
   Aura** or **Speechify** once you have saved an API key for that service.
+- **Reads articles from web pages aloud.** Type or paste a page's address,
+  and the app downloads the page and reads its article, leaving out menus,
+  adverts and related stories.
 - **Saves the spoken text as an audio file**, in MP3 or WAV format.
 - **Describes photos and other images** (JPEG, PNG, JPEG XL and HEIC/HEIF)
   using a local AI model running in [Ollama](https://ollama.com). The image
@@ -101,11 +104,14 @@ automatically.
 
 | Control | What it does |
 | --- | --- |
-| Text to read | "Choose File" reads a file you choose. "Paste Text" shows a box to type or paste text into instead. |
+| Text to read | "Choose File" reads a file you choose. "Paste Text" shows a box to type or paste text into instead. "Web Reader" reads the article on a web page. |
 | Current file | Shows the file you chose. Shown with "Choose File". |
 | Choose a file… | Opens a PDF, TXT, Markdown (.md), DOCX, ODT, CSV, ODS, PPTX, PPT, EPUB, JPEG, PNG, JPEG XL (.jxl) or HEIC file. Photos and other images are described by the local AI model. Transparent parts of an image are shown to the model on a white background, and only the first frame of an animated PNG or JPEG XL file is described. CSV and ODS files are read as a table, row by row, and each sheet of an ODS file is read in turn. PowerPoint presentations are read slide by slide, starting each with its number; speaker notes are left out. In PPTX files, SmartArt is read box by box, and charts are read as their title followed by each series with its values, such as "North. Q1: 10. Q2: 20." EPUB books start with their title and authors, such as "The City of the Blind, by Murray Leinster.", then are read chapter by chapter in reading order. A picture's description (its alt text) is read after the paragraph it's in, such as "Image: A man with a lantern."; pictures with no description, or marked as decoration, are passed over. Footnotes, the numbers that refer to them and printed page numbers are left out. Books with copy protection (DRM) can't be read. Shown with "Choose File". |
 | Word, OpenDocument, Markdown and EPUB files (DOCX, ODT, MD and EPUB) | **Content** reads just the text, without Markdown's symbols. **Format** reads the text and says how it's formatted: headings ("Heading level 1."), list items ("List item." or "List item, level 2."), tables ("Table.", "Row 1." and "End of table."), and where bold, italic, underlined, crossed-out, coloured and linked text starts and ends, such as "bold, very, end bold" or "colour red, warning, end colour". A heading's own bold or colour isn't said, and neither is a link's underline and colour. Markdown files also say "Quote." before a quotation, "Code." before a block of code, and "Done." or "Not done." for a task list item; raw HTML, front matter and footnotes are left out. EPUB books say "Quote." and "Code." too; their text colours aren't said. Colours are given as the nearest of a few plain names, such as red, dark blue or grey, and black text is not mentioned. These words are in English, like the part announcements, and appear in the text, so wordlists apply to them too. Changing this opens a Word, OpenDocument, Markdown or EPUB file that's already open again. Content is the default. Shown with "Choose File". |
 | Text | The text to read aloud, up to 200,000 characters. Shown with "Paste Text". Invisible characters that could hide or reorder words are removed before it is read. |
+| Web address | The address of the web page to read, such as `bbc.co.uk/news/articles/…`. Press Enter, or choose "Get text from the page", to get it. Pages are always fetched securely (https), and only pages on the internet can be read, not ones on your computer or local network. Shown with "Web Reader". |
+| Get text from the page | Downloads the page and takes out its article, leaving out menus, adverts, related stories, image credits and embedded social media posts. The headline is read first. If the page can't be read, a message says why: some sites only send their pages to web browsers or to people signed in, and some build their pages with JavaScript, which the app doesn't run. You can then copy the text from your browser and use "Paste Text". Shown with "Web Reader". |
+| Current page | The headline of the page last read. Saved audio is named after it. Shown with "Web Reader". |
 | Speech service | System voices, plus any cloud service with a saved API key. A line underneath says whether speech is made on your computer or your text is sent to the service. A PNG image is always read with the system voices, and this can't be changed while one is open, because PNG images are usually screenshots, which can show private details. The service you chose comes back when you open another kind of file or paste text. |
 | Voice | The voice to use. The app remembers the voice you chose for each service. |
 | Speaking speed | Only for ElevenLabs (0.7 to 1.2 times normal speed) and Deepgram Aura (0.7 to 1.5 times). Remembered for each service. |
@@ -374,6 +380,12 @@ them, so don't save keys on a shared account.
   voice, the status line says how many characters will be sent, so you can
   judge the cost. Reading aloud only sends text a little ahead of what you
   hear, so stopping early sends less.
+- With the Web Reader, your computer downloads the page directly from the
+  site, so only that site learns which page you read. Only the page itself is
+  downloaded: its images, scripts and adverts are not, so its trackers never
+  run. No cookies are sent or kept, and the site isn't told which page you
+  came from. The debug log records the site's name, such as `bbc.co.uk`,
+  and the page's headline, as it does a file's name, but not the full address.
 - Photos are sent only to Ollama on your own computer (`127.0.0.1:11434`),
   after they have been shrunk, converted to JPEG and had their metadata
   removed.

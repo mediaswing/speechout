@@ -1,5 +1,5 @@
 //! Text extraction from PDF, TXT, Markdown, DOCX, ODT, CSV, ODS, PPTX, PPT
-//! and EPUB files. Each format is read in a file of its own; this one says
+//! and EPUB files, and from web pages. Each format is read in a file of its own; this one says
 //! which kind of file is which, and tidies the text they give.
 
 mod xml;
@@ -13,6 +13,7 @@ mod odf;
 mod pptx;
 mod ppt;
 mod epub;
+mod web;
 
 use anyhow::{Context, bail};
 use csv::read_csv;
@@ -25,6 +26,7 @@ use ppt::read_ppt;
 use pptx::read_pptx;
 use std::path::Path;
 use text::read_txt;
+pub use web::{WebArticle, read_web_page};
 use xml::read_zip_xml;
 
 /// Files larger than this are refused, to keep memory use predictable.

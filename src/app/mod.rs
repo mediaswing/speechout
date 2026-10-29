@@ -119,6 +119,11 @@ pub struct SpeechApp {
     /// The text box as typed or pasted, and the cleaned text read aloud.
     pasted: String,
     pasted_text: String,
+    /// The Web Reader's address box, and the page last read from it.
+    web_address: String,
+    web_title: String,
+    web_text: String,
+    loading_page: bool,
     loading_file: bool,
     /// A photo or video chosen before a local AI model was found, to
     /// describe once the check for Ollama finishes.
@@ -212,6 +217,10 @@ impl SpeechApp {
             source: Source::File,
             pasted: String::new(),
             pasted_text: String::new(),
+            web_address: String::new(),
+            web_title: String::new(),
+            web_text: String::new(),
+            loading_page: false,
             loading_file: false,
             waiting: None,
             setting_up_ollama: false,
@@ -300,6 +309,7 @@ impl SpeechApp {
             None if self.setting_up_ollama => "progress.setting_up",
             None if self.setting_up_ffmpeg => "progress.setting_up_ffmpeg",
             None if self.loading_file || self.player.loader.is_some() => "progress.opening",
+            None if self.loading_page => "progress.getting_page",
             None => "progress.nothing",
         };
         let msg = tf(key, &[("percent", &percent)]);
@@ -350,6 +360,7 @@ impl SpeechApp {
                 Msg::ModelDownloaded(model, result) => self.model_downloaded(model, result),
                 Msg::OllamaReady(result) => self.ollama_ready(result),
                 Msg::Loaded(path, result) => self.file_loaded(path, result),
+                Msg::PageLoaded(result) => self.page_loaded(result),
                 Msg::Translated(result) => self.translated(result),
                 Msg::AudioLoaded(path, result) => self.audio_loaded(path, result),
                 Msg::PlaylistOpened(path, result) => self.playlist_opened(path, result),
@@ -435,6 +446,7 @@ impl SpeechApp {
             None if self.setting_up_ollama => (None, "bar.setting_up"),
             None if self.setting_up_ffmpeg => (None, "bar.setting_up_ffmpeg"),
             None if self.loading_file || self.player.loader.is_some() => (None, "bar.opening"),
+            None if self.loading_page => (None, "bar.getting_page"),
             None if self.player.control.is_some() => {
                 let key = if self.player.paused { "bar.audio_paused" } else { "bar.audio_playing" };
                 (Some(self.audio_fraction()), key)

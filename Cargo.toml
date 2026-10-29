@@ -41,6 +41,10 @@ tempfile = "3"
 log = "0.4"
 anyhow = "1"
 whisper-rs = { version = "0.16", features = ["log_backend", "raw-api"] }
+# Finds the article on a web page for the Web Reader, as Firefox's Reader
+# View does.
+dom_smoothie = "0.19"
+url = "2"
 
 [build-dependencies]
 # Embeds the icon in the Windows executable.
