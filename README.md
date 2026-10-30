@@ -601,7 +601,10 @@ src/spoken.rs         Email addresses, dates and numbers put the way they are sa
 src/secrets.rs        API key storage
 src/settings.rs       Saved settings
 src/logging.rs        Debug log
-src/platform/         Platform-specific code: windows.rs, macos.rs, linux.rs
+src/platform/         Platform-specific code: windows.rs, macos.rs, linux.rs, and
+                      unix.rs for what macOS and Linux share. The right-click
+                      menu is in context_menu.rs, context_menu_macos.rs and
+                      context_menu_linux.rs
 src/package/          Release packaging: the macOS .pkg and the Linux .deb
 src/installer/        The Windows Installer package, built with WiX Toolset
 wordlists/            Example wordlists (built into the app)
