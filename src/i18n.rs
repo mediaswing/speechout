@@ -342,7 +342,7 @@ const ENGLISH: &[(&str, &str)] = &[
          between tabs when a tab has focus.\nEscape closes an open list.",
     ),
     ("shortcuts.dialog_change", "You can change or turn off the shortcuts on the Settings tab."),
-    // Right-click menu (Windows)
+    // Right-click menu
     ("context_menu.heading", "Right-click menu"),
     (
         "context_menu.note",
@@ -373,6 +373,23 @@ const ENGLISH: &[(&str, &str)] = &[
         "Read aloud is not on the right-click menu. It comes with the Windows installer, from the app's releases on \
          GitHub.",
     ),
+    (
+        "context_menu.note_macos",
+        "Read aloud on the menu you get when you right-click a document or image in Finder reads the file in the \
+         background with the voice chosen here; choose it again to stop. PNG images, which are usually screenshots, \
+         are always read with the system voices. It is under Quick Actions.",
+    ),
+    (
+        "context_menu.note_linux",
+        "Read aloud on the menu you get when you right-click a document or image in the file manager reads the file \
+         in the background with the voice chosen here; choose it again to stop. PNG images, which are usually \
+         screenshots, are always read with the system voices. In Files it is under Scripts, and in file managers \
+         other than Dolphin and Nemo, under Open With.",
+    ),
+    ("context_menu.is_on", "Read aloud is on the right-click menu."),
+    ("context_menu.is_off", "Read aloud is not on the right-click menu."),
+    ("context_menu.add", "Add Read aloud to the right-click menu"),
+    ("context_menu.added", "Read aloud has been put on the right-click menu."),
     ("context_menu.verb", "Read aloud with Speech Output Engine"),
     ("background.failed", "Could not read {name} aloud. {error}"),
     ("background.nothing", "There is no text to read in {name}."),
@@ -1218,7 +1235,7 @@ mod tests {
         assert_eq!(english_map().len(), ENGLISH.len(), "a key appears twice in ENGLISH");
     }
 
-    const SOURCES: [&str; 17] = [
+    const SOURCES: [&str; 19] = [
         include_str!("app/mod.rs"),
         include_str!("app/general_tab.rs"),
         include_str!("app/keys.rs"),
@@ -1231,6 +1248,8 @@ mod tests {
         include_str!("app/wordlists_tab.rs"),
         include_str!("background.rs"),
         include_str!("platform/context_menu.rs"),
+        include_str!("platform/context_menu_macos.rs"),
+        include_str!("platform/context_menu_linux.rs"),
         include_str!("worker.rs"),
         include_str!("main.rs"),
         include_str!("audio.rs"),

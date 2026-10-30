@@ -1,5 +1,6 @@
 //! Reading a file aloud without opening the window (`speechout --read FILE`),
-//! as "Read aloud" on the right-click menu in File Explorer does.
+//! as "Read aloud" on the right-click menu in File Explorer, Finder or the
+//! file manager does.
 //!
 //! It uses the voice, speed, wordlists and other choices saved on the
 //! Settings tab. One file is read at a time: choosing Read aloud for another

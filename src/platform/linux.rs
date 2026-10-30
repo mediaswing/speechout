@@ -16,7 +16,7 @@ pub const SECRET_STORE_DESCRIPTION: &str = "a private file in your configuration
 
 /// Prefer the copy in /usr/bin so a writable directory early in PATH cannot
 /// substitute a different program.
-fn find_program(names: &[&str]) -> Option<PathBuf> {
+pub(super) fn find_program(names: &[&str]) -> Option<PathBuf> {
     for name in names {
         for dir in ["/usr/bin", "/usr/local/bin", "/bin"] {
             let candidate = Path::new(dir).join(name);
@@ -263,12 +263,4 @@ pub fn screen_reader_running() -> bool {
         .is_ok_and(|s| s.success())
 }
 
-/// Reading in the background is started from the right-click menu, which
-/// only Windows has, so there is never another reader to stop.
-pub fn stop_background_reader() -> bool {
-    false
-}
-
-pub fn become_background_reader(_on_stop: impl FnOnce() + Send + 'static) -> anyhow::Result<()> {
-    Ok(())
-}
+pub use super::unix::{become_background_reader, stop_background_reader};

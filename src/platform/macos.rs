@@ -278,12 +278,4 @@ pub fn screen_reader_running() -> bool {
         .is_ok_and(|s| s.success())
 }
 
-/// Reading in the background is started from the right-click menu, which
-/// only Windows has, so there is never another reader to stop.
-pub fn stop_background_reader() -> bool {
-    false
-}
-
-pub fn become_background_reader(_on_stop: impl FnOnce() + Send + 'static) -> anyhow::Result<()> {
-    Ok(())
-}
+pub use super::unix::{become_background_reader, stop_background_reader};

@@ -18,7 +18,11 @@
 //! * `stop_background_reader/become_background_reader` – make sure only one
 //!   file is read aloud in the background at a time (`speechout --read`).
 //!
-//! The right-click menu in File Explorer is Windows only, in `context_menu`.
+//! Read aloud on the right-click menu is in `context_menu`, one file per
+//! operating system as well: File Explorer on Windows, Finder on macOS, and
+//! the file managers on Linux. Each has `is_installed()` and `refresh()`; on
+//! macOS and Linux the app adds and removes it itself, with `add()` and
+//! `remove()`. macOS and Linux share some code, in `unix`.
 
 use crate::speech::Voice;
 
@@ -33,11 +37,20 @@ pub mod context_menu;
 mod macos;
 #[cfg(target_os = "macos")]
 use macos as imp;
+#[cfg(target_os = "macos")]
+#[path = "context_menu_macos.rs"]
+pub mod context_menu;
 
 #[cfg(all(unix, not(target_os = "macos")))]
 mod linux;
 #[cfg(all(unix, not(target_os = "macos")))]
 use linux as imp;
+#[cfg(all(unix, not(target_os = "macos")))]
+#[path = "context_menu_linux.rs"]
+pub mod context_menu;
+
+#[cfg(unix)]
+mod unix;
 
 /// Result of talking to a native secret store.
 #[cfg_attr(not(windows), allow(dead_code))]

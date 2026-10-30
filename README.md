@@ -279,24 +279,37 @@ up, as it does for photos.
   `speechout.previous.log`.
 - **Cloud voice API keys**: one box per service. Boxes are left empty for
   security; type a new key only to add or replace one.
-- **Right-click menu** (Windows): says whether "Read aloud with Speech
-  Output Engine" is on the menu you get when you right-click a PDF, text
-  file, Word or OpenDocument file, spreadsheet, PowerPoint file or image
-  (JPEG, PNG, JPEG XL or HEIC) in File Explorer. The installer adds it unless
+- **Right-click menu**: says whether "Read aloud with Speech Output Engine"
+  is on the menu you get when you right-click a PDF, text file, Word or
+  OpenDocument file, spreadsheet, PowerPoint file, EPUB book or image (JPEG,
+  PNG, JPEG XL or HEIC) in File Explorer, Finder or your Linux file manager.
+
+  On Windows, the installer adds it unless
   you untick it, and removes it when you uninstall. To add or remove it later,
   choose **Modify** for Speech Output Engine in Installed apps, then **Change**. The
   menu item is in the app's interface language once the app has been started.
   Without the installer, as when running a build from source, there is no
   menu to add, but one added by an earlier version of the app can be removed
-  here.
-  It reads the file in the background, without opening the window, using the
+  here. On Windows 11 the item is under **Show more options**.
+
+  On macOS and Linux, use the button here to add or remove it. On a Mac it
+  is a Quick Action, under **Quick Actions** on Finder's right-click menu,
+  which you can also turn off in System Settings, under Keyboard, Keyboard
+  Shortcuts, Services. On Linux it is at the top of the menu in Dolphin and
+  Nemo, under **Scripts** in Files (Nautilus), and under **Open With** in
+  other file managers. In Files it is offered for every file, but files the
+  app can't read just give an error. The menu item runs the copy of the app you
+  added it from, and the app puts it in the interface language each time it
+  starts. If that copy has been moved or deleted, the next copy you start
+  takes the menu item over.
+
+  Wherever it is, it reads the file in the background, without opening the window, using the
   voice, speed, wordlists and other choices made in the app (PNG images, as
   in the window, always use the system voices). Choosing it for
   another file stops the first; choosing it again for the same file stops
   reading. With a cloud voice, a message box first says how many characters
   will be sent, and asks whether to go ahead. Errors, and files with no text
   to read, are shown in a message box too. Nothing needs administrator rights.
-  On Windows 11 the item is under **Show more options**.
 
 ### Wordlists
 

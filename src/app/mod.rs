@@ -161,8 +161,8 @@ pub struct SpeechApp {
     pending: Vec<Command>,
     /// The tab buttons' ids last frame, to tell when one has focus.
     tab_buttons: Vec<Id>,
-    /// Read aloud is on the right-click menu in File Explorer.
-    #[cfg(windows)]
+    /// Read aloud is on the right-click menu in File Explorer, Finder or the
+    /// file manager.
     context_menu: bool,
     /// The Windows Installer installed the app, and manages that menu item.
     #[cfg(windows)]
@@ -199,7 +199,6 @@ impl SpeechApp {
         if screen_reader && settings.shortcuts_on.is_none() {
             status = format!("{} {}", status.trim_end(), t("status.screen_reader"));
         }
-        #[cfg(windows)]
         crate::platform::context_menu::refresh();
         let mut app = Self {
             log_dir_input: settings.log_dir().display().to_string(),
@@ -242,7 +241,6 @@ impl SpeechApp {
             keymap,
             pending: Vec::new(),
             tab_buttons: Vec::new(),
-            #[cfg(windows)]
             context_menu: crate::platform::context_menu::is_installed(),
             #[cfg(windows)]
             context_menu_managed: crate::platform::context_menu::managed_by_installer(),

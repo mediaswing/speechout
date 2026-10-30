@@ -47,9 +47,10 @@ pub enum FileKind {
 }
 
 /// Every file name ending the app reads, and the kind of file it marks. The
-/// file dialog and the right-click menu on Windows offer these endings, and a
-/// test checks the installer's list matches, so a new kind of file is added
-/// here alone.
+/// file dialog and the right-click menu offer these endings, and tests check
+/// the Windows installer's list matches and that the menu on macOS and Linux
+/// has a type for each, so a new kind of file is added here, then wherever a
+/// test says.
 const EXTENSIONS: [(&str, FileKind); 17] = [
     ("pdf", FileKind::Pdf),
     ("txt", FileKind::Text),

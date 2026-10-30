@@ -42,6 +42,13 @@ pub fn background_reading_file() -> PathBuf {
     dirs::data_local_dir().unwrap_or_else(std::env::temp_dir).join(APP_DIR).join("reading.txt")
 }
 
+/// Held locked by the process reading aloud in the background, on macOS and
+/// Linux, and used to ask it to stop (see `platform::unix`).
+#[cfg(unix)]
+pub fn background_reader_file() -> PathBuf {
+    dirs::data_local_dir().unwrap_or_else(std::env::temp_dir).join(APP_DIR).join("reader.lock")
+}
+
 pub fn default_log_dir() -> PathBuf {
     dirs::data_local_dir().unwrap_or_else(std::env::temp_dir).join(APP_DIR).join("logs")
 }

@@ -94,7 +94,9 @@ stages. If you change which files the Windows app needs, update both. It also
 adds the right-click menu, so a new kind of file the app reads goes in its
 `ContextMenuExtensions` list as well as in `EXTENSIONS` in `src/document/mod.rs`,
 which the file dialog and the right-click menu both use. A test checks the
-two lists match.
+two lists match. The menu on macOS and Linux names kinds of file by type
+rather than ending, so tests also check that every ending has a type in
+`src/platform/context_menu_macos.rs` and `src/platform/context_menu_linux.rs`.
 
 ### 5. Plain language
 

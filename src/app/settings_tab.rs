@@ -391,7 +391,6 @@ impl SpeechApp {
             self.remove_keys();
         }
 
-        #[cfg(windows)]
         self.context_menu_section(ui);
         self.shortcuts_section(ui);
     }
@@ -420,6 +419,32 @@ impl SpeechApp {
             }
         } else {
             ui.label(t("context_menu.needs_installer"));
+        }
+    }
+
+    /// Says whether Read aloud is on the right-click menu in Finder or the
+    /// file manager, and adds or removes it.
+    #[cfg(not(windows))]
+    fn context_menu_section(&mut self, ui: &mut Ui) {
+        use crate::platform::context_menu;
+        ui.add_space(8.0);
+        heading(ui, &t("context_menu.heading"));
+        let note = if cfg!(target_os = "macos") { "context_menu.note_macos" } else { "context_menu.note_linux" };
+        ui.label(t(note));
+        ui.label(t(if self.context_menu { "context_menu.is_on" } else { "context_menu.is_off" }));
+        let (button, change, done): (_, fn() -> anyhow::Result<()>, _) = if self.context_menu {
+            ("context_menu.remove", context_menu::remove, "context_menu.removed")
+        } else {
+            ("context_menu.add", context_menu::add, "context_menu.added")
+        };
+        if !full_button(ui, &t(button), true).clicked() {
+            return;
+        }
+        let result = change();
+        self.context_menu = context_menu::is_installed();
+        match result {
+            Ok(()) => self.announce(t(done)),
+            Err(e) => self.show_error(tf("context_menu.failed", &[("error", &format!("{e:#}"))])),
         }
     }
 

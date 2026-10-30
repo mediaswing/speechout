@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Added
+
+- Read aloud is now on the right-click menu on macOS and Linux too. Add it with the button under Right-click menu on the Settings tab. On a Mac, it is under Quick Actions when you right-click a document or image in Finder. On Linux, it is at the top of the menu in Dolphin and Nemo, under Scripts in Files, and under Open With in other file managers. As on Windows, it reads the file in the background with the voice chosen in the app, and choosing it again stops reading.
+
 ### Changed
 
 - In a translated app, the sentences that tell you which key to press now say the key's name in that language too, such as "Échap" for Escape in French, as your screen reader would. Letters, numbers and function keys stay as they are, and buttons still show the keys as they're printed on the keyboard. Translations you already have keep working: translate again to add the key names, which stay in English until then.
