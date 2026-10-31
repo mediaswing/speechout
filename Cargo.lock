@@ -4172,7 +4172,7 @@ dependencies = [
 
 [[package]]
 name = "speechout"
-version = "3.7.0"
+version = "3.7.1"
 dependencies = [
  "anyhow",
  "base64 0.23.1",
