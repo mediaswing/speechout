@@ -311,7 +311,7 @@ mod tests {
         assert_eq!(nautilus_scripts_written(dir.path()), [script]);
         assert!(files[0].contents.contains("MimeType=application/epub+zip;application/pdf;"));
         assert!(files[0].contents.contains("Exec=\"/usr/bin/speechout\" --read %f\n"));
-        let odd = files(dir.path(), "/opt/50%Fun/speechout", "Read aloud");
+        let odd = super::files(dir.path(), "/opt/50%Fun/speechout", "Read aloud");
         assert!(odd[1].contents.contains("Exec=\"/opt/50%%Fun/speechout\" --read %F\n"), "{}", odd[1].contents);
     }
 
