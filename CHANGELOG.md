@@ -1,5 +1,13 @@
 # Changelog
 
+## [Unreleased]
+
+### Fixed
+
+- When you choose Read aloud for another file while one is being read in the background, the new file now waits until the first has stopped, so you never hear the two at once. Before, if the first took more than a few seconds to stop, both were read together for a moment.
+- On macOS and Linux, choosing Read aloud again now stops reading when your home folder is on a network drive that can't lock files. Before, it started reading the file a second time instead.
+- Translating the app now finishes in one go when some text is the same in English, such as "Pause" in French. Text the AI model gives back in English is asked for again before translating ends, instead of being reported as not translated until you translate again.
+
 ## [3.7.0] - 2026-10-30
 
 ### Added

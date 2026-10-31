@@ -390,6 +390,10 @@ pub fn screen_reader_running() -> bool {
 /// exists while one is being read.
 const READER_EVENT: windows::core::PCWSTR = w!(r"Local\SpeechOut.BackgroundReader");
 
+/// Owned by the process reading aloud in the background, so the next one can
+/// wait for it to finish.
+const READER_MUTEX: windows::core::PCWSTR = w!(r"Local\SpeechOut.BackgroundReaderRunning");
+
 pub fn stop_background_reader() -> bool {
     use windows::Win32::Foundation::CloseHandle;
     use windows::Win32::System::Threading::{EVENT_MODIFY_STATE, OpenEventW, SetEvent};
@@ -413,22 +417,53 @@ pub fn stop_background_reader() -> bool {
 }
 
 pub fn become_background_reader(on_stop: impl FnOnce() + Send + 'static) -> anyhow::Result<()> {
-    use windows::Win32::Foundation::{ERROR_ALREADY_EXISTS, GetLastError, HANDLE};
-    use windows::Win32::System::Threading::{CreateEventW, INFINITE, ResetEvent, WaitForSingleObject};
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::time::{Duration, Instant};
+    use windows::Win32::Foundation::{ERROR_ALREADY_EXISTS, GetLastError, HANDLE, WAIT_ABANDONED, WAIT_OBJECT_0};
+    use windows::Win32::System::Threading::{CreateEventW, CreateMutexW, INFINITE, ResetEvent, WaitForSingleObject};
+    let setting_up = "could not set up reading in the background";
     // SAFETY: the event name is a valid wide string. The handle is kept open
     // until the process exits, so the waiting thread can always use it.
-    let event = unsafe { CreateEventW(None, true, false, READER_EVENT) }.context("could not set up reading in the background")?;
+    let event = unsafe { CreateEventW(None, true, false, READER_EVENT) }.context(setting_up)?;
     // A reader that was asked to stop but hasn't exited yet still has the
     // event, which is set. It has already been woken, so clear it.
     if unsafe { GetLastError() } == ERROR_ALREADY_EXISTS {
         let _ = unsafe { ResetEvent(event) };
     }
+    // Started before waiting below, so a later reader can ask this one to
+    // stop while it waits.
+    let stopped = Arc::new(AtomicBool::new(false));
+    let flag = stopped.clone();
     // A HANDLE can't be sent between threads, but its value can.
     let raw = event.0 as isize;
     std::thread::spawn(move || {
         // SAFETY: the handle stays open for the life of the process.
         unsafe { WaitForSingleObject(HANDLE(raw as *mut _), INFINITE) };
+        flag.store(true, Ordering::SeqCst);
         on_stop();
     });
+    // Owned while reading, and given up when the process exits, however it
+    // exits. A reader that was asked to stop but hasn't exited yet still
+    // owns it, so wait for it to go before reading, so the two are never
+    // heard at once. One that takes longer has probably hung, so reading
+    // starts anyway.
+    // SAFETY: the mutex name is a valid wide string. The handle is kept open
+    // until the process exits; this thread, which owns the mutex, runs until
+    // then too.
+    let mutex = unsafe { CreateMutexW(None, false, READER_MUTEX) }.context(setting_up)?;
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        // A mutex whose owner exited without giving it up is abandoned, and
+        // is then owned by this thread just the same.
+        let result = unsafe { WaitForSingleObject(mutex, 100) };
+        if result == WAIT_OBJECT_0 || result == WAIT_ABANDONED || stopped.load(Ordering::SeqCst) {
+            break;
+        }
+        if Instant::now() >= deadline {
+            log::warn!("the reader in the background that was asked to stop is still running; reading anyway");
+            break;
+        }
+    }
     Ok(())
 }

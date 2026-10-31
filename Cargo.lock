@@ -4185,6 +4185,7 @@ dependencies = [
  "image",
  "jxl",
  "kamadak-exif",
+ "libc",
  "libheif-rs",
  "log",
  "mp3lame-encoder",

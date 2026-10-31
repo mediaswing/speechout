@@ -980,6 +980,25 @@ pub fn translate(rep: Reporter, control: Arc<Control>, language: Language, model
     {
         return rep.send(Msg::Translated(Err(err(e))));
     }
+    // Text that came back in English is asked for once more, as the first
+    // English reply isn't trusted (see `Translation::add`). Text that really
+    // is the same in both, such as "Pause" in French, is then kept, rather
+    // than being reported as not translated until the next run.
+    let again: Vec<&str> =
+        translation.missing().into_iter().filter(|key| translation.came_back_in_english.contains(*key)).collect();
+    if !stopped && !again.is_empty() {
+        log::info!("asking again for {} piece(s) of text that came back in English", again.len());
+    }
+    for batch in again.chunks(i18n::BATCH_SIZE) {
+        if stopped || control.is_stopped() {
+            stopped = true;
+            break;
+        }
+        match i18n::translate_batch(&model, &language, batch) {
+            Ok(done) => translation.add(done),
+            Err(e) => log::warn!("asking again for text that came back in English failed: {e:#}"),
+        }
+    }
     if let Err(e) = i18n::save(&crate::paths::languages_dir(), &language.code, &translation) {
         return rep.send(Msg::Translated(Err(err(e))));
     }

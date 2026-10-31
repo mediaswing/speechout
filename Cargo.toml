@@ -83,6 +83,10 @@ windows = { version = "0.62", features = [
 ] }
 windows-future = "0.3"
 
+[target.'cfg(unix)'.dependencies]
+# Checks whether a process is running (see src/platform/unix.rs).
+libc = "0.2"
+
 [target.'cfg(all(unix, not(target_os = "macos")))'.dependencies]
 tar = "0.4"
 # Compresses the .deb. Static, so the app doesn't link the system liblzma.

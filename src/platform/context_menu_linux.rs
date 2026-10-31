@@ -255,6 +255,10 @@ fn one_line(text: &str) -> String {
 /// Quotes a program for the Exec line of a desktop entry. Inside the
 /// quotes, `"`, `` ` ``, `$` and `\` are escaped with a backslash, and then
 /// every backslash is doubled again, as the file's own escaping comes first.
+/// `%` becomes `%%`. Nemo's actions are read the same way: Nemo reads Exec
+/// with GLib's key file reader, which undoes the backslashes, turns `%%` back
+/// into `%` (its TOKEN_EXEC_LITERAL_PERCENT), and parses the result as a
+/// shell would, so one quoting does for every file.
 fn desktop_quote(arg: &str) -> String {
     let mut quoted = String::from("\"");
     for c in arg.chars() {
@@ -307,6 +311,8 @@ mod tests {
         assert_eq!(nautilus_scripts_written(dir.path()), [script]);
         assert!(files[0].contents.contains("MimeType=application/epub+zip;application/pdf;"));
         assert!(files[0].contents.contains("Exec=\"/usr/bin/speechout\" --read %f\n"));
+        let odd = files(dir.path(), "/opt/50%Fun/speechout", "Read aloud");
+        assert!(odd[1].contents.contains("Exec=\"/opt/50%%Fun/speechout\" --read %F\n"), "{}", odd[1].contents);
     }
 
     #[test]
