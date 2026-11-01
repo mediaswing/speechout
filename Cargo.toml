@@ -44,6 +44,7 @@ whisper-rs = { version = "0.16", features = ["log_backend", "raw-api"] }
 # Finds the article on a web page for the Web Reader, as Firefox's Reader
 # View does.
 dom_smoothie = "0.19"
+encoding_rs = "0.8"
 url = "2"
 
 [build-dependencies]

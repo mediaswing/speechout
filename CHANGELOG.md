@@ -6,6 +6,14 @@
 
 - A Send feedback button at the end of the Settings tab opens the feedback form in your web browser. Its shortcut is F8, which you can change or turn off under Keyboard shortcuts.
 
+### Fixed
+
+- The Web Reader now reads addresses typed without "https://" that have another web address in them, such as `example.com/share?u=https://…`. Before, they were refused as not starting with https://.
+- Web pages in other character sets, such as Shift_JIS, GBK, EUC-KR, Windows-1251 and ISO-8859-2, are now read correctly. Before, their text came out as nonsense.
+- A headline with invisible characters in it is no longer read twice.
+- Pages that a site sends with a success code other than 200, such as 203 from some proxies, can now be read.
+- The Web Reader now connects only to the internet addresses it checked, so a site can't switch to an address on your computer or local network between the check and the download. Two more kinds of local IPv6 address are refused too.
+
 ## [3.7.1] - 2026-10-31
 
 ### Fixed

@@ -4,8 +4,12 @@
 //! anonymous visit, and the page's trackers and adverts never run.
 
 use anyhow::{Context, bail};
-use std::net::{IpAddr, ToSocketAddrs};
+use std::net::{IpAddr, SocketAddr, ToSocketAddrs};
 use std::time::Duration;
+use ureq::config::Config;
+use ureq::http::Uri;
+use ureq::unversioned::resolver::{DefaultResolver, ResolvedSocketAddrs, Resolver};
+use ureq::unversioned::transport::{DefaultConnector, NextTimeout};
 use url::{Host, Url};
 
 /// Pages larger than this are refused. A long article with all its markup is
@@ -32,11 +36,14 @@ pub fn parse_address(text: &str) -> anyhow::Result<Url> {
         bail!("type or paste the address of a web page");
     }
     let lower = text.to_ascii_lowercase();
+    // "://" before any "/", "?" or "#" starts the address. Later on, it is
+    // part of it, as in "example.com/share?u=https://…".
+    let has_scheme = text.find("://").is_some_and(|at| !text[..at].contains(['/', '?', '#']));
     let with_scheme = if lower.starts_with("https://") {
         text.to_owned()
     } else if lower.starts_with("http://") {
         format!("https://{}", &text["http://".len()..])
-    } else if text.contains("://") {
+    } else if has_scheme {
         bail!("only web addresses starting with https:// can be read");
     } else {
         format!("https://{text}")
@@ -45,8 +52,9 @@ pub fn parse_address(text: &str) -> anyhow::Result<Url> {
 }
 
 /// Pages are only fetched securely, from the internet, without a user name or
-/// password in the address.
-fn check_url(url: &Url) -> anyhow::Result<()> {
+/// password in the address. Gives the addresses the site's name leads to,
+/// which are the only ones connected to.
+fn check_url(url: &Url) -> anyhow::Result<Vec<SocketAddr>> {
     if url.scheme() != "https" {
         bail!("the page tried to move to an address that isn't secure (https)");
     }
@@ -54,22 +62,50 @@ fn check_url(url: &Url) -> anyhow::Result<()> {
         bail!("web addresses with a user name or password in them can't be read");
     }
     let host = url.host().context("that is not a web address")?;
-    let addresses: Vec<IpAddr> = match host {
-        Host::Ipv4(ip) => vec![IpAddr::V4(ip)],
-        Host::Ipv6(ip) => vec![IpAddr::V6(ip)],
-        Host::Domain(name) => (name, url.port_or_known_default().unwrap_or(443))
+    let port = url.port_or_known_default().unwrap_or(443);
+    let addresses: Vec<SocketAddr> = match host {
+        Host::Ipv4(ip) => vec![SocketAddr::new(IpAddr::V4(ip), port)],
+        Host::Ipv6(ip) => vec![SocketAddr::new(IpAddr::V6(ip), port)],
+        Host::Domain(name) => (name, port)
             .to_socket_addrs()
             .with_context(|| format!("could not find {name}. Check the address and your internet connection"))?
-            .map(|a| a.ip())
             .collect(),
     };
     // Otherwise a link could reach things on this computer or network,
     // such as Ollama or a router's settings page.
-    if addresses.is_empty() || !addresses.iter().all(is_public) {
+    if addresses.is_empty() || !addresses.iter().all(|a| is_public(&a.ip())) {
         bail!("only pages on the internet can be read, not ones on this computer or your local network");
     }
-    Ok(())
+    Ok(addresses)
 }
+
+/// Connects to the site only at the addresses `check_url` approved. Looking
+/// the name up again could give a different answer, such as a local address
+/// from a site that changes its answer straight after the check.
+#[derive(Debug)]
+struct Checked {
+    /// The site's name as it appears in the address, such as "example.com"
+    /// or "[2606:4700::1111]".
+    host: String,
+    addresses: Vec<SocketAddr>,
+}
+
+impl Resolver for Checked {
+    fn resolve(&self, uri: &Uri, config: &Config, timeout: NextTimeout) -> Result<ResolvedSocketAddrs, ureq::Error> {
+        // A proxy set in the environment is looked up as usual.
+        if uri.host() != Some(self.host.as_str()) {
+            return DefaultResolver::default().resolve(uri, config, timeout);
+        }
+        let mut out = self.empty();
+        for address in &self.addresses {
+            if out.try_push(*address).is_err() {
+                break;
+            }
+        }
+        if out.is_empty() { Err(ureq::Error::HostNotFound) } else { Ok(out) }
+    }
+}
+
 
 /// Whether `ip` is an internet address, rather than one on this computer,
 /// the local network or reserved for something else.
@@ -99,6 +135,10 @@ fn is_public(ip: &IpAddr) -> bool {
                 Some(v4)
             } else if s[..6] == [0x64, 0xff9b, 0, 0, 0, 0] {
                 Some(std::net::Ipv4Addr::from((u32::from(s[6]) << 16) | u32::from(s[7])))
+            } else if s[..6] == [0, 0, 0, 0, 0, 0] {
+                // The old "IPv4-compatible" form, ::a.b.c.d. :: and ::1 become
+                // 0.0.0.0 and 0.0.0.1, which are refused.
+                Some(std::net::Ipv4Addr::from((u32::from(s[6]) << 16) | u32::from(s[7])))
             } else if s[0] == 0x2002 {
                 Some(std::net::Ipv4Addr::from((u32::from(s[1]) << 16) | u32::from(s[2])))
             } else {
@@ -114,30 +154,34 @@ fn is_public(ip: &IpAddr) -> bool {
                 // Unique local addresses, the IPv6 version of a private network.
                 || (first & 0xfe00) == 0xfc00
                 // Link-local addresses.
-                || (first & 0xffc0) == 0xfe80)
+                || (first & 0xffc0) == 0xfe80
+                // NAT64 for a local network only, which can reach its IPv4
+                // addresses.
+                || s[..3] == [0x64, 0xff9b, 1])
         }
     }
 }
 
-fn agent() -> ureq::Agent {
-    ureq::Agent::config_builder()
+/// An agent for one request to the site at `checked`.
+fn agent(checked: Checked) -> ureq::Agent {
+    let config = ureq::Agent::config_builder()
         .https_only(true)
         .http_status_as_error(false)
         // Redirects are followed here instead, so each address is checked.
         .max_redirects(0)
         .timeout_global(Some(Duration::from_secs(20)))
         .user_agent(concat!("speechout/", env!("CARGO_PKG_VERSION")))
-        .build()
-        .into()
+        .build();
+    ureq::Agent::with_parts(config, DefaultConnector::new(), checked)
 }
 
 /// Downloads the page at `url`, following redirects.
 pub fn fetch(url: Url) -> anyhow::Result<Page> {
-    let agent = agent();
     let mut url = url;
     for _ in 0..=MAX_REDIRECTS {
-        check_url(&url)?;
-        let mut resp = agent
+        let addresses = check_url(&url)?;
+        let host = url.host_str().unwrap_or_default().to_owned();
+        let mut resp = agent(Checked { host, addresses })
             .get(url.as_str())
             .header("Accept", "text/html,application/xhtml+xml;q=0.9,*/*;q=0.1")
             .call()
@@ -156,7 +200,7 @@ pub fn fetch(url: Url) -> anyhow::Result<Page> {
             continue;
         }
         match status {
-            200 => {}
+            200..=299 => {}
             401 | 403 => bail!("the site refused to send the page (HTTP error {status}). It may only allow web browsers, or need you to sign in"),
             404 | 410 => bail!("the site says the page doesn't exist (HTTP error {status}). Check the address"),
             429 => bail!("the site is getting too many requests (HTTP error 429). Try again later"),
@@ -205,10 +249,32 @@ mod tests {
         assert!(address("ftp://1.1.1.1/file").starts_with("error: only web addresses starting with https://"));
         assert!(address("").starts_with("error: type or paste"));
         assert!(address("https://").starts_with("error: that is not a web address"));
+        assert!(address("FTP://1.1.1.1/file").starts_with("error: only web addresses starting with https://"));
+    }
+
+    #[test]
+    fn addresses_can_contain_other_addresses() {
+        assert_eq!(address("1.1.1.1/share?u=https://example.com/"), "https://1.1.1.1/share?u=https://example.com/");
+        assert_eq!(address("1.1.1.1#https://example.com"), "https://1.1.1.1/#https://example.com");
+        assert_eq!(address("1.1.1.1?u=ftp://example.com"), "https://1.1.1.1/?u=ftp://example.com");
+    }
+
+    fn no_timeout() -> NextTimeout {
+        NextTimeout { after: ureq::unversioned::transport::time::Duration::NotHappening, reason: ureq::Timeout::Resolve }
+    }
+
+    #[test]
+    fn only_checked_addresses_are_connected_to() {
+        let checked = Checked { host: "example.com".into(), addresses: vec!["1.1.1.1:443".parse().unwrap()] };
+        let uri: Uri = "https://example.com/news".parse().unwrap();
+        let found = checked.resolve(&uri, &Config::default(), no_timeout()).unwrap();
+        assert_eq!(&found[..], &["1.1.1.1:443".parse::<SocketAddr>().unwrap()]);
+        let none = Checked { host: "example.com".into(), addresses: Vec::new() };
+        assert!(none.resolve(&uri, &Config::default(), no_timeout()).is_err());
     }
 
     fn checked(text: &str) -> String {
-        check_url(&parse_address(text).unwrap()).map(|()| "ok".into()).unwrap_or_else(|e| format!("error: {e}"))
+        check_url(&parse_address(text).unwrap()).map(|_| "ok".into()).unwrap_or_else(|e| format!("error: {e}"))
     }
 
     #[test]
@@ -229,6 +295,9 @@ mod tests {
             "[fd00::1]",
             "[fe80::1]",
             "[::ffff:192.168.0.1]",
+            "[::7f00:1]",
+            "[::c0a8:101]",
+            "[64:ff9b:1::c0a8:101]",
         ] {
             assert!(checked(text).starts_with("error: only pages on the internet"), "{text} was allowed");
         }

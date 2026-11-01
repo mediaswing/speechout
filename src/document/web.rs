@@ -3,10 +3,10 @@
 //! related stories and footers. What it can't tell apart from the article,
 //! such as image credits, is tidied away afterwards.
 
-use super::text::read_txt;
 use super::{is_hidden_format, tidy};
 use anyhow::bail;
 use dom_smoothie::{Config, Readability, TextMode};
+use encoding_rs::{Encoding, UTF_8, UTF_16BE, UTF_16LE};
 use regex::Regex;
 use std::sync::LazyLock;
 
@@ -24,9 +24,6 @@ const EMBEDDED_POSTS: &str = "blockquote.twitter-tweet, blockquote.instagram-med
 
 /// An image credit run into a caption, such as "Dubai(Image: We Love TV)".
 static IMAGE_CREDIT: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\s*\((Image|Photo|Picture): [^)]*\)").unwrap());
-
-/// Character sets that are decoded as Windows-1252, as web browsers do.
-const WINDOWS_1252: [&str; 5] = ["windows-1252", "cp1252", "iso-8859-1", "latin1", "us-ascii"];
 
 /// The article on a web page.
 pub struct WebArticle {
@@ -47,7 +44,7 @@ pub fn read_web_page(html: &[u8], url: &str, charset: Option<&str>) -> anyhow::R
     let Ok(article) = readability.parse() else {
         bail!("no article was found on the page");
     };
-    let title = tidy(&article.title);
+    let title = tidy(&visible(&article.title));
     let body = clean(&article.text_content);
     if body.split_whitespace().count() < MIN_WORDS {
         bail!("no article was found on the page. The site may need a web browser to show it");
@@ -56,16 +53,32 @@ pub fn read_web_page(html: &[u8], url: &str, charset: Option<&str>) -> anyhow::R
     Ok(WebArticle { title, text })
 }
 
-/// The page's text. Almost every page is UTF-8, and one bad byte mustn't make
-/// the rest unreadable, so Windows-1252 is only used for a page that says it
-/// is in it, in its headers or a `<meta>` tag near its start.
+/// The page's text. A byte order mark settles it. Otherwise almost every page
+/// is UTF-8, and sites often name the wrong character set, so a page that is
+/// valid UTF-8 is read as UTF-8. Any other page is read in the character set
+/// it names in its headers or a `<meta>` tag near its start, with the names
+/// web browsers know, such as Shift_JIS or Windows-1251. A page that names
+/// none is read as UTF-8, where one bad byte spoils only itself.
 fn decode(html: &[u8], charset: Option<&str>) -> String {
-    let declared = charset.map(str::to_ascii_lowercase).or_else(|| meta_charset(html));
-    let utf16 = html.starts_with(&[0xFF, 0xFE]) || html.starts_with(&[0xFE, 0xFF]);
-    if utf16 || declared.is_some_and(|c| WINDOWS_1252.contains(&c.as_str())) {
-        read_txt(html)
-    } else {
-        String::from_utf8_lossy(html.strip_prefix(&[0xEF, 0xBB, 0xBF]).unwrap_or(html)).into_owned()
+    if let Some((encoding, bom)) = Encoding::for_bom(html) {
+        return encoding.decode_without_bom_handling(&html[bom..]).0.into_owned();
+    }
+    let from_headers = charset.and_then(|c| Encoding::for_label(c.trim().as_bytes()));
+    // UTF-16 text in English is also valid UTF-8, so the headers' word comes
+    // first. A `<meta>` tag can't name UTF-16, as it couldn't be found in a
+    // UTF-16 page; browsers take it to mean UTF-8.
+    if let Some(utf16) = from_headers.filter(|e| *e == UTF_16LE || *e == UTF_16BE) {
+        return utf16.decode_without_bom_handling(html).0.into_owned();
+    }
+    if let Ok(text) = std::str::from_utf8(html) {
+        return text.to_owned();
+    }
+    let declared = from_headers.or_else(|| meta_charset(html).and_then(|c| Encoding::for_label(c.as_bytes())));
+    match declared {
+        Some(encoding) if encoding != UTF_8 && encoding != UTF_16LE && encoding != UTF_16BE => {
+            encoding.decode_without_bom_handling(html).0.into_owned()
+        }
+        _ => String::from_utf8_lossy(html).into_owned(),
     }
 }
 
@@ -77,9 +90,14 @@ fn meta_charset(html: &[u8]) -> Option<String> {
     let name: String = after
         .trim_start_matches(['"', '\''])
         .chars()
-        .take_while(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_'))
+        .take_while(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.' | ':'))
         .collect();
     (!name.is_empty()).then_some(name)
+}
+
+/// `text` without invisible characters that can hide or reorder words.
+fn visible(text: &str) -> String {
+    text.chars().filter(|c| !is_hidden_format(*c)).collect()
 }
 
 /// Tidies the article's text, and leaves out what isn't part of it:
@@ -87,9 +105,8 @@ fn meta_charset(html: &[u8]) -> Option<String> {
 /// credits, a paragraph repeated straight after itself (a subheading shown
 /// twice), and single words before the article starts, such as "Comments".
 fn clean(text: &str) -> String {
-    let visible: String = text.chars().filter(|c| !is_hidden_format(*c)).collect();
     let mut paragraphs: Vec<String> = Vec::new();
-    for para in tidy(&visible).split("\n\n") {
+    for para in tidy(&visible(text)).split("\n\n") {
         let para = IMAGE_CREDIT.replace_all(para, "");
         let para = para.trim();
         let credit = ["Image:", "Photo:", "Picture:"].iter().any(|p| para.starts_with(p))
@@ -201,5 +218,58 @@ mod tests {
         assert!(article.text.contains("The café’s owner\u{fffd} said “yes”."), "{}", article.text);
         let article = read_web_page(&html, URL, None).unwrap();
         assert!(article.text.contains("The café’s owner\u{fffd} said “yes”."), "{}", article.text);
+    }
+
+    #[test]
+    fn reads_pages_in_other_character_sets() {
+        for (charset, sentence) in
+            [("shift_jis", "図書館は春に開館します。"), ("windows-1251", "Библиотека откроется весной."), ("iso-8859-2", "Knihovna se otevře na jaře.")]
+        {
+            let encoding = Encoding::for_label(charset.as_bytes()).unwrap();
+            let html = page(&format!("<p>{sentence}</p>"));
+            let (bytes, _, _) = encoding.encode(&html);
+            assert!(decode(&bytes, Some(charset)).contains(sentence), "{charset}");
+            // Said in a <meta> tag instead of the headers.
+            let html = html.replace("charset=\"utf-8\"", &format!("charset=\"{charset}\""));
+            let (bytes, _, _) = encoding.encode(&html);
+            assert!(decode(&bytes, None).contains(sentence), "{charset} in <meta>");
+        }
+        // As a whole article.
+        let sentence = "Библиотека откроется весной, после двух лет строительства и долгих споров о её стоимости.";
+        let html = page(&format!("<p>{sentence}</p>"));
+        let (bytes, _, _) = encoding_rs::WINDOWS_1251.encode(&html);
+        let article = read_web_page(&bytes, URL, Some("windows-1251")).unwrap();
+        assert!(article.text.contains(sentence), "{}", article.text);
+    }
+
+    #[test]
+    fn reads_utf_16_pages() {
+        let html = page("<p>A new library is coming to the town centre.</p>");
+        let utf16: Vec<u8> = html.encode_utf16().flat_map(u16::to_le_bytes).collect();
+        let article = read_web_page(&utf16, URL, Some("utf-16le")).unwrap();
+        assert!(article.text.contains("A new library is coming"), "{}", article.text);
+        let with_bom = [&[0xFF, 0xFE][..], &utf16].concat();
+        let article = read_web_page(&with_bom, URL, None).unwrap();
+        assert!(article.text.contains("A new library is coming"), "{}", article.text);
+    }
+
+    /// A UTF-8 page that says it is in another character set is read as UTF-8.
+    #[test]
+    fn utf_8_pages_with_the_wrong_charset_are_read_as_utf_8() {
+        let html = page("<p>The café’s owner said “yes”.</p>");
+        let article = read_web_page(html.as_bytes(), URL, Some("iso-8859-1")).unwrap();
+        assert!(article.text.contains("The café’s owner said “yes”."), "{}", article.text);
+    }
+
+    /// Invisible characters in a headline don't stop it being matched with
+    /// the article's own, so it isn't read twice.
+    #[test]
+    fn hidden_characters_leave_the_title() {
+        let html = page("<p>A new library is coming to the town centre.</p>")
+            .replace("content=\"Library to open in spring\"", "content=\"Library\u{200B} to open in spring\"")
+            .replace("<title>Library to open", "<title>Library\u{200B} to open");
+        let article = read_web_page(html.as_bytes(), URL, None).unwrap();
+        assert_eq!(article.title, "Library to open in spring");
+        assert_eq!(article.text.matches("Library to open in spring").count(), 1, "{}", article.text);
     }
 }

@@ -4181,6 +4181,7 @@ dependencies = [
  "dom_smoothie",
  "eframe",
  "egui",
+ "encoding_rs",
  "hound",
  "image",
  "jxl",
