@@ -1,5 +1,11 @@
 # Changelog
 
+## [Unreleased]
+
+### Added
+
+- A Send feedback button at the end of the Settings tab opens the feedback form in your web browser. Its shortcut is F8, which you can change or turn off under Keyboard shortcuts.
+
 ## [3.7.1] - 2026-10-31
 
 ### Fixed

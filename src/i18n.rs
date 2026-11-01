@@ -186,6 +186,10 @@ const ENGLISH: &[(&str, &str)] = &[
     ),
     ("update.opened", "Opened the download page for version {version}."),
     ("update.open_failed", "{error}. The download page is {url}"),
+    ("feedback.heading", "Feedback"),
+    ("feedback.button", "Send feedback{shortcut}"),
+    ("feedback.opened", "Opened the feedback form in your web browser."),
+    ("feedback.open_failed", "{error}. The feedback form is {url}"),
     ("update.later", "Version {version} is available. You can download it later from the Settings tab."),
     // Reading aloud and saving
     ("read.nothing", "There is nothing to read yet.{open_hint}"),
@@ -406,6 +410,7 @@ const ENGLISH: &[(&str, &str)] = &[
     ("shortcut.stop_second", "Stop: second shortcut"),
     ("shortcut.progress", "Hear the progress, or the time in the audio file or video"),
     ("shortcut.help", "List the keyboard shortcuts"),
+    ("shortcut.feedback", "Send feedback"),
     // Sentences that name a shortcut key, put into other messages.
     ("hint.open", "Press {key} to choose a file."),
     ("hint.open_here", "Press {key} on this tab."),

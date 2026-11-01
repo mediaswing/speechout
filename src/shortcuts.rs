@@ -285,10 +285,11 @@ pub enum Action {
     StopSecond,
     Progress,
     Help,
+    Feedback,
 }
 
 impl Action {
-    pub const ALL: [Action; 12] = [
+    pub const ALL: [Action; 13] = [
         Action::Open,
         Action::Save,
         Action::GoToTab,
@@ -301,6 +302,7 @@ impl Action {
         Action::StopSecond,
         Action::Progress,
         Action::Help,
+        Action::Feedback,
     ];
 
     /// The name saved in settings.
@@ -318,6 +320,7 @@ impl Action {
             Action::StopSecond => "stop_second",
             Action::Progress => "progress",
             Action::Help => "help",
+            Action::Feedback => "feedback",
         }
     }
 
@@ -335,6 +338,7 @@ impl Action {
             Action::StopSecond => "shortcut.stop_second",
             Action::Progress => "shortcut.progress",
             Action::Help => "shortcut.help",
+            Action::Feedback => "shortcut.feedback",
         })
     }
 
@@ -356,6 +360,7 @@ impl Action {
             Action::StopSecond if mac => Shortcut::command(Key::Period),
             Action::Progress => Shortcut::key(Key::F7),
             Action::Help => Shortcut::key(Key::F1),
+            Action::Feedback => Shortcut::key(Key::F8),
             Action::ReadSecond | Action::StopSecond => return None,
         })
     }

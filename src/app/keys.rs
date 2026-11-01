@@ -106,6 +106,7 @@ impl SpeechApp {
                 }
             }
             Action::Help => self.show_shortcuts(),
+            Action::Feedback => self.open_feedback(),
         }
     }
 

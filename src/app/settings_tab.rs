@@ -43,6 +43,23 @@ impl SpeechApp {
         }
     }
 
+    fn feedback_section(&mut self, ui: &mut Ui) {
+        ui.add_space(8.0);
+        heading(ui, &t("feedback.heading"));
+        if full_button(ui, &self.keyed("feedback.button", Action::Feedback), true).clicked() {
+            self.open_feedback();
+        }
+    }
+
+    /// Opens the feedback form in the browser.
+    pub(super) fn open_feedback(&mut self) {
+        const FEEDBACK_FORM: &str = "https://www.cognitoforms.com/Mediastorm1/Soresp";
+        match crate::platform::open_url(FEEDBACK_FORM) {
+            Ok(()) => self.announce(t("feedback.opened")),
+            Err(e) => self.show_error(tf("feedback.open_failed", &[("error", &e), ("url", &FEEDBACK_FORM)])),
+        }
+    }
+
     fn check_for_update(&mut self) {
         if self.checking_update {
             return;
@@ -393,6 +410,7 @@ impl SpeechApp {
 
         self.context_menu_section(ui);
         self.shortcuts_section(ui);
+        self.feedback_section(ui);
     }
 
     /// Says whether Read aloud is on the right-click menu in File Explorer.
