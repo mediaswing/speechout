@@ -368,41 +368,51 @@ impl SpeechApp {
         self.progress_bar(ui);
 
         let has_text = !self.video.text.is_empty();
-        if self.video.editing {
-            if full_button(ui, &t("video.finish_editing"), true).clicked() {
+        let ((edit, edit_name), can_edit) = if self.video.editing {
+            (short_and_full("video.finish_editing_short", "video.finish_editing"), true)
+        } else {
+            (short_and_full("video.edit_short", "video.edit"), has_text && !describing)
+        };
+        let read = self.keyed("general.read_aloud", Action::Read);
+        let stop = self.keyed("general.stop", Action::Stop);
+        let stop_name = if describing { self.keyed("video.stop", Action::Stop) } else { stop.clone() };
+        let save = self.keyed(short_key("video.save_short", "general.save"), Action::Save);
+        let save_name = self.keyed("general.save", Action::Save);
+        let (copy, copy_name) = short_and_full("video.copy_short", "video.copy");
+        let clicked = button_row(
+            ui,
+            &[
+                (edit.as_str(), edit_name.as_str(), can_edit),
+                (read.as_str(), read.as_str(), has_text && !self.is_busy()),
+                (stop.as_str(), stop_name.as_str(), self.is_busy()),
+                (save.as_str(), save_name.as_str(), has_text && !self.is_busy()),
+                (copy.as_str(), copy_name.as_str(), has_text),
+            ],
+        );
+        if clicked[0] {
+            if self.video.editing {
                 self.finish_editing_video();
+            } else {
+                self.edit_video_text();
             }
-        } else if full_button(ui, &t("video.edit"), has_text && !describing).clicked() {
-            self.edit_video_text();
         }
-        if full_button(ui, &self.keyed("general.read_aloud", Action::Read), has_text && !self.is_busy()).clicked() {
+        if clicked[1] {
             self.read_aloud();
         }
-        let stop_label = match self.job {
-            Some((JobKind::DescribingVideo, _)) => self.keyed("video.stop", Action::Stop),
-            _ => self.keyed("general.stop", Action::Stop),
-        };
-        if full_button(ui, &stop_label, self.is_busy()).clicked() {
+        if clicked[2] {
             self.stop();
         }
-        let save_label = self.keyed("general.save", Action::Save);
-        let can_save = has_text && !self.is_busy();
-        let (mut save, mut copy) = (false, false);
-        ui.columns(2, |cols| {
-            save = full_button(&mut cols[0], &save_label, can_save).clicked();
-            copy = full_button(&mut cols[1], &t("video.copy"), has_text).clicked();
-        });
-        if save {
+        if clicked[3] {
             self.save_audio();
         }
-        if copy {
+        if clicked[4] {
             let ctx = ui.ctx().clone();
             self.copy_text(&ctx);
         }
     }
 
-    /// The video on the left, with its controls under it, and the
-    /// description on the right to edit. Read aloud, Save and Copy use the
+    /// The video on the left and the description on the right to edit, with
+    /// the video's controls in a row under both. Read aloud, Save and Copy use the
     /// edited description.
     fn video_editor(&mut self, ui: &mut Ui) {
         let place = self.video_place(false);
@@ -413,21 +423,12 @@ impl SpeechApp {
         };
         let playing = self.video.control.is_some();
         let speaking = matches!(self.job, Some((JobKind::Speaking | JobKind::Previewing, _)));
-        let play_label = t("video.play");
-        let pause_label = self.keyed(if self.video.paused { "general.resume" } else { "general.pause" }, Action::Pause);
-        let stop_label = self.keyed("video.stop_playing", Action::Stop);
-        let (mut play, mut pause, mut stop, mut back, mut forward) = (false, false, false, false, false);
         let focus = std::mem::take(&mut self.video.focus_text);
         let text = &mut self.video.text;
         ui.columns(2, |cols| {
             let left = &mut cols[0];
             video_preview(left, picture.as_ref(), &t("video.preview_none"));
             left.label(&place);
-            play = full_button(left, &play_label, !playing && !speaking).clicked();
-            pause = full_button(left, &pause_label, playing).clicked();
-            stop = full_button(left, &stop_label, playing).clicked();
-            back = full_button(left, &t("player.back"), true).clicked();
-            forward = full_button(left, &t("player.forward"), true).clicked();
 
             let right = &mut cols[1];
             let label = right.label(t("video.text_label"));
@@ -437,19 +438,36 @@ impl SpeechApp {
                 resp.request_focus();
             }
         });
-        if play {
+
+        let (play, play_name) = short_and_full("video.play_short", "video.play");
+        let pause = self.keyed(if self.video.paused { "general.resume" } else { "general.pause" }, Action::Pause);
+        let stop = self.keyed("general.stop", Action::Stop);
+        let stop_name = self.keyed("video.stop_playing", Action::Stop);
+        let (back, back_name) = short_and_full("player.back_short", "player.back");
+        let (forward, forward_name) = short_and_full("player.forward_short", "player.forward");
+        let clicked = button_row(
+            ui,
+            &[
+                (play.as_str(), play_name.as_str(), !playing && !speaking),
+                (pause.as_str(), pause.as_str(), playing),
+                (stop.as_str(), stop_name.as_str(), playing),
+                (back.as_str(), back_name.as_str(), true),
+                (forward.as_str(), forward_name.as_str(), true),
+            ],
+        );
+        if clicked[0] {
             self.play_video();
         }
-        if pause {
+        if clicked[1] {
             self.toggle_video_pause();
         }
-        if stop {
+        if clicked[2] {
             self.stop_video();
         }
-        if back {
+        if clicked[3] {
             self.skip_video(-10.0);
         }
-        if forward {
+        if clicked[4] {
             self.skip_video(10.0);
         }
     }

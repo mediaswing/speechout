@@ -1,5 +1,13 @@
 # Changelog
 
+## [Unreleased]
+
+### Changed
+
+- On the Audio Player tab, Play, Pause, Stop, Back, Forward (and Previous and Next for a playlist) now share one line, and so do the transcript buttons, with their labels centred. The transcript text now appears under those buttons.
+- On the Describe Video tab, Edit, Read aloud, Stop, Save and Copy share one line. While you edit a description, the video's Play, Pause, Stop, Back and Forward buttons share a line under the video and the description, instead of being stacked under the video.
+- These buttons have shorter labels, such as "Back" and "Copy text", so that each row fits. Screen readers still say the full names, such as "Back 10 seconds", which also show when you point at a button. A translation made before this change shows the full names in its own language until you translate the app again.
+
 ## [3.7.2] - 2026-11-01
 
 ### Added

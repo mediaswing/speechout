@@ -92,11 +92,16 @@ the first time it starts.
 ## The window
 
 The window has five tabs across the top: **General**, **Settings**,
-**Wordlists**, **Audio Player** and **Describe Video**. Every button, box and dropdown sits on its own line and fills the
-width of the window, except the two buttons at the bottom of the Describe
-Video tab, which share a line. At the bottom, a progress bar shows how far through
+**Wordlists**, **Audio Player** and **Describe Video**. Most buttons, boxes
+and dropdowns sit on their own line and fill the width of the window. The
+exceptions are on the Audio Player and Describe Video tabs, where the playback
+buttons share one line, and so do the buttons for the transcript or the
+description. Those buttons have short labels so that they fit; screen readers
+say each one's full name, which also shows when you point at the button. In a
+very narrow window, or with a long translation, a label wraps onto a second
+line. At the bottom, a progress bar shows how far through
 reading aloud or saving audio you are (on the Describe Video tab it is under
-the preview instead), and a status line below it reports what
+the picture instead), and a status line below it reports what
 is happening and any errors. Screen readers announce the status line
 automatically.
 
@@ -128,20 +133,20 @@ automatically.
 | Choose an audio file… | Opens a WAV, MP3 or WMA file, or a zip file of them to play as a playlist. The app says how long it is and whether it sounds like speech, music or silence. A long file takes a moment to open; Escape or Stop cancels it. WMA files, such as those from Olympus voice recorders, are opened with ffmpeg, which the app offers to install if it's missing, as for videos. |
 | Track | Only for a playlist. Chooses which track to play. |
 | Waveform | A picture of the sound, with the part already played highlighted. Screen readers read its length and what it sounds like. |
-| Play / Pause / Stop | Controls playback. Play carries on from where you paused or moved to. |
-| Back 10 seconds / Forward 10 seconds | Moves through the file, and says the new position. |
-| Previous track / Next track | Only for a playlist. Moves to the track before or after, and plays it if the track you were on was playing. |
+| Play / Pause / Stop | On one line with Back, Forward, Previous and Next. Controls playback. Play carries on from where you paused or moved to. |
+| Back / Forward | Moves 10 seconds through the file, and says the new position. Screen readers call them "Back 10 seconds" and "Forward 10 seconds". |
+| Previous / Next | Only for a playlist. Moves to the track before or after, and plays it if the track you were on was playing. Screen readers call them "Previous track" and "Next track". |
 | Label who is speaking | Whether the transcript says who is speaking. Choose to have the app work out how many people there are, or choose the number yourself, which is more accurate. |
-| Transcribe the speech | Writes down what is said. This happens by itself when a file sounds like speech; press this to try a file that didn't, or to transcribe again with a different model. While transcribing, it becomes **Stop transcribing**. |
-| Show the transcript | Shows the transcript text under it, once a file has been transcribed. It becomes **Hide the transcript**. The transcript is hidden again when another file or track opens. |
-| Transcript text | Only once you press **Show the transcript**. The words, in paragraphs, which start after a long pause or, when speakers are labelled, when someone else speaks. You can review it with a screen reader. |
-| Copy the transcript to the clipboard / Save the transcript as a text file… | Takes the transcript elsewhere. |
+| Transcribe | On one line with Show text, Copy text and Save text…. Writes down what is said. This happens by itself when a file sounds like speech; press this to try a file that didn't, or to transcribe again with a different model. While transcribing, it becomes **Stop transcribing**. Screen readers call it "Transcribe the speech". |
+| Show text | Shows the transcript text under the buttons, once a file has been transcribed. It becomes **Hide text**. The transcript is hidden again when another file or track opens. Screen readers call it "Show the transcript" (or "Hide the transcript"). |
+| Copy text / Save text… | Copies the transcript to the clipboard, or saves it as a text file. Screen readers call them "Copy the transcript to the clipboard" and "Save the transcript as a text file…". |
+| Transcript text | Only once you press **Show text**. The words, in paragraphs, which start after a long pause or, when speakers are labelled, when someone else speaks. You can review it with a screen reader. |
 
 A zip file of WAV and MP3 files plays as a playlist: when one track ends, the
 next one opens and plays. Each track is transcribed when it opens, as a single
 file would be. The app only offers to download the models for transcribing
 when the first track opens; if you say no, later tracks aren't transcribed
-until you press **Transcribe the speech**.
+until you press **Transcribe**.
 
 To choose the order, put a text file called `listing.txt` in the zip, with
 the name of one audio file on each line:
@@ -164,7 +169,7 @@ Speech rises and falls with each syllable and has short gaps between words,
 and it mixes vowels with hissy sounds such as "s" and "f"; music and most
 other sounds don't. A file is transcribed by itself when most of its seconds
 look like speech. Songs and music with talking over it may not be, so press
-**Transcribe the speech** if you want to try.
+**Transcribe** if you want to try.
 
 The first time anything is transcribed, the app asks to download the Whisper
 model from Hugging Face. It is downloaded once and kept on your computer.
@@ -193,9 +198,9 @@ or on phone-quality audio. Choosing the number of people helps.
 | Choose a video… | Opens an MP4, M4V, MOV, MKV, WebM, AVI, WMV, MPEG or 3GP video and describes it. |
 | Preview | The picture being described. Screen readers read which picture it is and when it comes in the video. |
 | Progress bar | How far through describing the video the app is. |
-| Edit the description / Finish editing | Edit the description shows the video and the description side by side (see below). Finish editing puts the tab back as it was, keeping your changes. |
-| Read aloud / Stop | Reads the description aloud: each picture's description, starting with when it comes, such as "At 1 minute 5 seconds:". While the video is being described, Stop stops describing. |
-| Save spoken text as audio… / Copy the description to the clipboard | Side by side on one line. Takes the description elsewhere. |
+| Edit / Finish | On one line with Read aloud, Stop, Save audio… and Copy text. Edit shows the video and the description side by side (see below). Finish puts the tab back as it was, keeping your changes. Screen readers call them "Edit the description" and "Finish editing". |
+| Read aloud / Stop | Reads the description aloud: each picture's description, starting with when it comes, such as "At 1 minute 5 seconds:". While the video is being described, Stop stops describing, and screen readers call it "Stop describing the video". |
+| Save audio… / Copy text | Saves the description as spoken audio, or copies it to the clipboard. Screen readers call them "Save spoken text as audio…" and "Copy the description to the clipboard". |
 
 The app uses ffmpeg to take the keyframes out of the video. These are the
 whole pictures a video is built from; the frames between them only record
@@ -207,11 +212,10 @@ isn't described or transcribed.
 
 When the video has been described, the app asks whether you'd like to edit
 the description. If you choose **No**, the tab stays as it is. If you choose
-**Yes** (or press **Edit the description** later), the video moves to the
-left with its controls under it, and the description goes on the right in a
-box you can type in, which has the keyboard focus. **Play the video**,
-**Pause**, **Stop the video**, **Back 10 seconds** and **Forward 10 seconds**
-work on the video, sound and all, and F6, F7 and Escape work on it as they do
+**Yes** (or press **Edit** later), the video moves to the left and the
+description goes on the right in a box you can type in, which has the
+keyboard focus. Under them, on one line, **Play**, **Pause**, **Stop**,
+**Back** and **Forward** (10 seconds) work on the video, sound and all, and F6, F7 and Escape work on it as they do
 on an audio file. Read aloud, Save and Copy use the description as you've
 edited it. Reading aloud pauses the video, so you can hear the description
 and then carry on from the same place.
@@ -237,7 +241,10 @@ up, as it does for photos.
   Translations by a small AI model can contain mistakes. Each one is saved as
   a JSON file in the `languages` folder next to your settings, where you can
   correct it, or share it with others. Text the translation leaves out is
-  shown in English, and pressing the button again fills it in. A translation
+  shown in English, and pressing the button again fills it in. The one
+  exception is the short labels on the Audio Player and Describe Video
+  buttons: until they are translated, those buttons show their full names in
+  your language instead. A translation
   file for a language that isn't in the list, such as `eo.json` for
   Esperanto, is offered as well, using the `language` name inside it.
   Only use translation files from people you trust: a file can't run

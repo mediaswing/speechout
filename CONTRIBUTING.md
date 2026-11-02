@@ -53,7 +53,10 @@ feature must work for them from the start, not be added later.
   a polite live region. Use the helpers in `src/app/widgets.rs`, such as the labelled
   dropdown and the heading widget, rather than plain egui widgets.
 - **The layout stays simple.** Each control is on its own full-width line, in a
-  sensible reading order. The focus ring must stay thick and clearly visible in
+  sensible reading order. The exception is a set of closely related buttons,
+  such as playback controls, which can share one line through `button_row` in
+  `src/app/widgets.rs`. Keep their labels short enough to fit at the default
+  window width, and give each button its full name for screen readers. The focus ring must stay thick and clearly visible in
   light and dark mode.
 - **The user is kept informed.** Progress, results and errors are reported in
   the status line, in words that make sense when spoken aloud.
@@ -110,6 +113,12 @@ Every label and message the app shows lives in the `ENGLISH` list in
 write values as `{name}` rather than building sentences from pieces, since
 word order differs between languages. A test checks that every key used in
 the code has English text.
+
+A short label for a button in a row has its own key ending in `_short`, next
+to the full label's key. Use `short_and_full("x_short", "x")` (or `short_key`
+for a label that has a shortcut hint), so that a translation made before the
+short label existed shows the full label in its own language, not the short
+one in English.
 
 ### 6. Few dependencies
 

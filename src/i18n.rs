@@ -488,7 +488,11 @@ const ENGLISH: &[(&str, &str)] = &[
     ("player.play", "Play{shortcut}"),
     ("player.back", "Back 10 seconds"),
     ("player.forward", "Forward 10 seconds"),
+    // Short labels for buttons in a row; screen readers say the full ones.
+    ("player.back_short", "Back"),
+    ("player.forward_short", "Forward"),
     ("player.transcribe", "Transcribe the speech"),
+    ("player.transcribe_short", "Transcribe"),
     ("player.nothing", "Choose an audio file first.{open_here_hint}"),
     ("player.reading_aloud", "Something is being read aloud. Stop it before playing the audio file."),
     ("player.video_playing", "The video on the Describe Video tab is playing or paused. Stop it first."),
@@ -519,6 +523,8 @@ const ENGLISH: &[(&str, &str)] = &[
     ("playlist.track", "{number}. {name}"),
     ("playlist.previous", "Previous track"),
     ("playlist.next", "Next track"),
+    ("playlist.previous_short", "Previous"),
+    ("playlist.next_short", "Next"),
     ("time.hour", "1 hour"),
     ("time.hours", "{count} hours"),
     ("time.minute", "1 minute"),
@@ -529,6 +535,8 @@ const ENGLISH: &[(&str, &str)] = &[
     ("transcript.label", "Transcript text"),
     ("transcript.show", "Show the transcript"),
     ("transcript.hide", "Hide the transcript"),
+    ("transcript.show_short", "Show text"),
+    ("transcript.hide_short", "Hide text"),
     ("transcript.busy", "It can be transcribed when the app has finished what it is doing."),
     (
         "transcript.started",
@@ -546,6 +554,8 @@ const ENGLISH: &[(&str, &str)] = &[
     ("transcript.failed", "Could not transcribe the audio file. {error}"),
     ("transcript.copy", "Copy the transcript to the clipboard"),
     ("transcript.save", "Save the transcript as a text file…{shortcut}"),
+    ("transcript.copy_short", "Copy text"),
+    ("transcript.save_short", "Save text…{shortcut}"),
     ("transcript.save_title", "Save the transcript"),
     ("transcript.filter", "Text file"),
     ("transcript.default_name", "transcript"),
@@ -572,6 +582,8 @@ const ENGLISH: &[(&str, &str)] = &[
     ("video.busy", "Wait for the app to finish what it is doing, or stop it, then choose the video again."),
     ("video.nothing", "There is no description yet.{open_hint}"),
     ("video.copy", "Copy the description to the clipboard"),
+    ("video.copy_short", "Copy text"),
+    ("video.save_short", "Save audio…{shortcut}"),
     ("video.edit_title", "Edit the description?"),
     (
         "video.edit_question",
@@ -579,14 +591,18 @@ const ENGLISH: &[(&str, &str)] = &[
          as speech? The video can be played beside it.",
     ),
     ("video.edit", "Edit the description"),
+    ("video.edit_short", "Edit"),
     (
         "video.editing",
-        "Editing the description. The video and its controls are on the left, and the description is on the right.",
+        "Editing the description. The video is on the left and the description on the right, with the video's \
+         controls under them.",
     ),
     ("video.text_label", "Description"),
     ("video.finish_editing", "Finish editing"),
+    ("video.finish_editing_short", "Finish"),
     ("video.edited", "Finished editing. The description has {words} words.{read_hint}{save_hint}"),
     ("video.play", "Play the video"),
+    ("video.play_short", "Play"),
     ("video.stop_playing", "Stop the video{shortcut}"),
     ("video.playing", "Playing the video.{pause_hint}{stop_hint}"),
     ("video.position", "{position}."),
@@ -794,6 +810,28 @@ pub fn tf(key: &str, args: &[(&str, &dyn Display)]) -> String {
     let hints = hints.as_deref().unwrap_or_else(|| default_hints());
     let active = ACTIVE.read().unwrap_or_else(|e| e.into_inner());
     render(active.as_ref(), hints, key, args)
+}
+
+/// Which key to use for a button that has a short label, `short`, as well as
+/// its full one, `full`: the short one in English or when the translation in
+/// use has it, or else the full one, so a translation made before the short
+/// label was added keeps its own words instead of showing English.
+pub fn short_key(short: &'static str, full: &'static str) -> &'static str {
+    let active = ACTIVE.read().unwrap_or_else(|e| e.into_inner());
+    pick_short(active.as_ref(), short, full)
+}
+
+/// The text for a button's short label, as `short_key` picks it, and its
+/// full one, for screen readers and the tooltip.
+pub fn short_and_full(short: &'static str, full: &'static str) -> (String, String) {
+    (t(short_key(short, full)), t(full))
+}
+
+fn pick_short<'a>(active: Option<&HashMap<String, String>>, short: &'a str, full: &'a str) -> &'a str {
+    match active {
+        Some(translation) if !translation.contains_key(short) => full,
+        _ => short,
+    }
 }
 
 /// The text for `key` in the language in use, as it is, for text with no
@@ -1264,7 +1302,7 @@ mod tests {
 
     #[test]
     fn every_key_used_in_the_code_has_english_text() {
-        let call = regex::Regex::new(r#"\btf?\(\s*"([a-z_.]+)""#).unwrap();
+        let call = regex::Regex::new(r#"\b(?:tf?|short_key|short_and_full)\(\s*"([a-z_.]+)""#).unwrap();
         let mut count = 0;
         for source in SOURCES {
             for cap in call.captures_iter(source) {
@@ -1306,6 +1344,18 @@ mod tests {
         let name = "notes.pdf";
         assert_eq!(render(Some(&fr), &[], "file.opening", &[("name", &name)]), "Ouverture de notes.pdf.");
         assert_eq!(render(Some(&fr), &[], "general.voice", &[]), "Voice");
+    }
+
+    /// A translation without a button's short label uses its full one, in
+    /// the translation's words, rather than the short one in English.
+    #[test]
+    fn short_labels_fall_back_to_the_full_ones() {
+        let (short, full) = ("player.back_short", "player.back");
+        assert_eq!(pick_short(None, short, full), short);
+        let old = map(&[(full, "Reculer de 10 secondes")]);
+        assert_eq!(pick_short(Some(&old), short, full), full);
+        let new = map(&[(full, "Reculer de 10 secondes"), (short, "Reculer")]);
+        assert_eq!(pick_short(Some(&new), short, full), short);
     }
 
     #[test]

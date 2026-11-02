@@ -26,7 +26,7 @@ mod wordlists_tab;
 use crate::APP_TITLE;
 use crate::audio::{AudioFormat, Cue, Listened, SoundKind};
 use crate::document::{DocumentReading, FileKind};
-use crate::i18n::{self, Language, Translation, t, tf};
+use crate::i18n::{self, Language, Translation, short_and_full, short_key, t, tf};
 use crate::playlist::Playlist;
 use crate::settings::Settings;
 use crate::shortcuts::{self, Action, Command, KeyContext, Keymap, Platform, Shortcut};

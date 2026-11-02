@@ -75,6 +75,74 @@ pub(super) fn full_button(ui: &mut Ui, text: &str, enabled: bool) -> egui::Respo
         .inner
 }
 
+/// Buttons side by side on one line, as `(shown, name, enabled)`: `shown`
+/// is the label on the button, kept short so the row fits, and `name` is
+/// what screen readers say and the tooltip shows, which can be fuller.
+/// Returns which were clicked, in the same order.
+///
+/// The buttons share the width equally when every label fits that way, or
+/// else each is as wide as its label plus an equal share of what is left.
+/// Only when even that is too wide (a narrow window, or a long translation)
+/// do labels wrap, each line centred, with every button in the row as tall
+/// as the tallest so they stay level.
+pub(super) fn button_row(ui: &mut Ui, buttons: &[(&str, &str, bool)]) -> Vec<bool> {
+    let count = buttons.len().max(1) as f32;
+    let room = (ui.available_width() - ui.spacing().item_spacing.x * (count - 1.0)).max(count);
+    let padding = egui::vec2(8.0, ui.spacing().button_padding.y);
+    let font = egui::TextStyle::Button.resolve(ui.style());
+    let layout = |ui: &Ui, text: &str, wrap_width: f32| {
+        let mut job = egui::text::LayoutJob::simple(text.to_owned(), font.clone(), Color32::PLACEHOLDER, wrap_width);
+        job.halign = egui::Align::Center;
+        ui.fonts_mut(|f| f.layout_job(job))
+    };
+    let natural: Vec<f32> =
+        buttons.iter().map(|(shown, _, _)| layout(ui, shown, f32::INFINITY).size().x + 2.0 * padding.x).collect();
+    let widest = natural.iter().copied().fold(0.0, f32::max);
+    let total: f32 = natural.iter().sum();
+    let widths: Vec<f32> = if widest * count <= room {
+        vec![room / count; buttons.len()]
+    } else if total <= room {
+        natural.iter().map(|w| w + (room - total) / count).collect()
+    } else {
+        vec![room / count; buttons.len()]
+    };
+    let galleys: Vec<_> = buttons
+        .iter()
+        .zip(&widths)
+        .map(|((shown, _, _), width)| layout(ui, shown, (width - 2.0 * padding.x).max(1.0)))
+        .collect();
+    let tallest = galleys.iter().map(|g| g.size().y).fold(0.0, f32::max);
+    let height = (tallest + 2.0 * padding.y).max(CONTROL_HEIGHT);
+
+    let mut clicked = vec![false; buttons.len()];
+    ui.horizontal_top(|ui| {
+        for (i, (((shown, name, enabled), galley), width)) in buttons.iter().zip(galleys).zip(widths).enumerate() {
+            let resp = ui
+                .add_enabled_ui(*enabled, |ui| {
+                    let (rect, resp) = ui.allocate_exact_size([width, height].into(), egui::Sense::click());
+                    resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, ui.is_enabled(), *name));
+                    if ui.is_rect_visible(rect) {
+                        let visuals = ui.style().interact(&resp);
+                        ui.painter().rect(
+                            rect.expand(visuals.expansion),
+                            visuals.corner_radius,
+                            visuals.weak_bg_fill,
+                            visuals.bg_stroke,
+                            egui::StrokeKind::Inside,
+                        );
+                        // A centred galley's lines are laid out around x = 0.
+                        let pos = egui::pos2(rect.center().x, rect.center().y - galley.size().y / 2.0);
+                        ui.painter().galley(pos, galley, visuals.text_color());
+                    }
+                    if name != shown { resp.on_hover_text(*name) } else { resp }
+                })
+                .inner;
+            clicked[i] = resp.clicked();
+        }
+    });
+    clicked
+}
+
 pub(super) fn text_field(ui: &mut Ui, label: &str, value: &mut String, editable: bool) -> egui::Response {
     let label = ui.label(label);
     let resp = if editable {
