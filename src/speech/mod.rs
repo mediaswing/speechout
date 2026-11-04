@@ -60,6 +60,17 @@ impl Provider {
         }
     }
 
+    /// The web page where an API key for this service is made.
+    pub fn key_page(self) -> Option<&'static str> {
+        match self {
+            Provider::System => None,
+            Provider::ElevenLabs => Some("https://elevenlabs.io/app/developers/api-keys"),
+            Provider::OpenAi => Some("https://platform.openai.com/api-keys"),
+            Provider::Deepgram => Some("https://console.deepgram.com/"),
+            Provider::Speechify => Some("https://platform.speechify.ai/api-keys"),
+        }
+    }
+
     /// Largest piece of text sent in one request, in Unicode characters.
     ///
     /// These are deliberately well below what each service accepts (checked
@@ -426,6 +437,14 @@ mod tests {
         assert_eq!(speed_label(1.0), "Normal speed");
         assert_eq!(speed_label(0.8), "0.8 times normal speed (slower)");
         assert_eq!(speed_label(1.2), "1.2 times normal speed (faster)");
+    }
+
+    #[test]
+    fn every_service_with_a_key_links_to_its_key_page() {
+        for provider in Provider::ALL {
+            assert_eq!(provider.key_page().is_some(), provider.key_name().is_some());
+            assert!(provider.key_page().is_none_or(|page| page.starts_with("https://")));
+        }
     }
 
     #[test]

@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Added
+
+- Each API key box on the Settings tab now has a link beside its label to the page where you can get a key for that service.
+
 ### Fixed
 
 - Saving API keys now plays the success sound. Before, the only sign that a key had been saved was the message at the bottom of the window, so it could seem that nothing had happened.

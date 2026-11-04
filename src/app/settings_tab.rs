@@ -69,6 +69,16 @@ impl SpeechApp {
         self.rep.spawn(|rep| worker::check_for_update(rep, true));
     }
 
+    /// Opens the page where a key for `provider` is made in the browser.
+    fn open_key_page(&mut self, provider: Provider) {
+        let Some(url) = provider.key_page() else { return };
+        let service = provider.short_name();
+        match crate::platform::open_url(url) {
+            Ok(()) => self.announce(tf("keys.page_opened", &[("service", &service)])),
+            Err(e) => self.show_error(tf("keys.page_failed", &[("error", &e), ("service", &service), ("url", &url)])),
+        }
+    }
+
     fn save_keys(&mut self) {
         let mut saved = Vec::new();
         let mut where_ = "";
@@ -400,7 +410,10 @@ impl SpeechApp {
             let key = if self.api_keys.contains_key(&provider) { "keys.label_saved" } else { "keys.label_none" };
             let label = tf(key, &[("service", &provider.name())]);
             let input = self.key_inputs.entry(provider).or_default();
-            password_field(ui, &label, input);
+            let link = tf("keys.get", &[("service", &provider.short_name())]);
+            if password_field(ui, &label, &link, input) {
+                self.open_key_page(provider);
+            }
         }
         if full_button(ui, &t("keys.save"), true).clicked() {
             self.save_keys();

@@ -240,13 +240,16 @@ pub(super) fn video_preview(ui: &mut Ui, preview: Option<&(egui::TextureHandle, 
     });
 }
 
-pub(super) fn password_field(ui: &mut Ui, label: &str, value: &mut String) {
-    let label = ui.label(label);
+pub(super) fn password_field(ui: &mut Ui, label: &str, link: &str, value: &mut String) -> bool {
+    // The link comes before the box, so the keyboard reaches it first. It
+    // stays out of the box's name, so screen readers don't repeat it.
+    let (label, clicked) = ui.horizontal_wrapped(|ui| (ui.label(label), ui.link(link).clicked())).inner;
     ui.add_sized(
         [ui.available_width(), CONTROL_HEIGHT],
         egui::TextEdit::singleline(value).password(true).desired_width(f32::INFINITY),
     )
     .labelled_by(label.id);
+    clicked
 }
 
 /// A labelled, full-width dropdown. While it has focus and is closed, the Up,

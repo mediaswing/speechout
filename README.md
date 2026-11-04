@@ -284,8 +284,9 @@ up, as it does for photos.
 - **Debug log folder**: where the app writes `speechout.log`. Each launch
   starts a fresh log; the one from the session before is kept as
   `speechout.previous.log`.
-- **Cloud voice API keys**: one box per service. Boxes are left empty for
-  security; type a new key only to add or replace one.
+- **Cloud voice API keys**: one box per service, each with a link to the page
+  where you can get a key for that service. Boxes are left empty for security;
+  type a new key only to add or replace one.
 - **Right-click menu**: says whether "Read aloud with Speech Output Engine"
   is on the menu you get when you right-click a PDF, text file, Word or
   OpenDocument file, spreadsheet, PowerPoint file, EPUB book or image (JPEG,
