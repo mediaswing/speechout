@@ -77,7 +77,8 @@ pub(super) fn full_button(ui: &mut Ui, text: &str, enabled: bool) -> egui::Respo
 
 /// Buttons side by side on one line, as `(shown, name, enabled)`: `shown`
 /// is the label on the button, kept short so the row fits, and `name` is
-/// what screen readers say and the tooltip shows, which can be fuller.
+/// what screen readers say and the tooltip shows, which can be fuller but
+/// must contain the words of `shown`, for people using voice control.
 /// Returns which were clicked, in the same order.
 ///
 /// The buttons share the width equally when every label fits that way, or
@@ -134,7 +135,7 @@ pub(super) fn button_row(ui: &mut Ui, buttons: &[(&str, &str, bool)]) -> Vec<boo
                         let pos = egui::pos2(rect.center().x, rect.center().y - galley.size().y / 2.0);
                         ui.painter().galley(pos, galley, visuals.text_color());
                     }
-                    if name != shown { resp.on_hover_text(*name) } else { resp }
+                    if name != shown { resp.on_hover_text(*name).on_disabled_hover_text(*name) } else { resp }
                 })
                 .inner;
             clicked[i] = resp.clicked();

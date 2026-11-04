@@ -536,8 +536,8 @@ const ENGLISH: &[(&str, &str)] = &[
     ("time.seconds", "{count} seconds"),
     ("transcript.heading", "Transcript"),
     ("transcript.label", "Transcript text"),
-    ("transcript.show", "Show the transcript"),
-    ("transcript.hide", "Hide the transcript"),
+    ("transcript.show", "Show text of the transcript"),
+    ("transcript.hide", "Hide text of the transcript"),
     ("transcript.show_short", "Show text"),
     ("transcript.hide_short", "Hide text"),
     ("transcript.busy", "It can be transcribed when the app has finished what it is doing."),
@@ -552,11 +552,11 @@ const ENGLISH: &[(&str, &str)] = &[
     ("transcript.no_speech", "No speech was found in {name}."),
     (
         "transcript.done",
-        "Transcribed {name}, {count} words. Press Show the transcript to read it.{save_transcript_hint}",
+        "Transcribed {name}, {count} words. Press \"{button}\" to read it.{save_transcript_hint}",
     ),
     ("transcript.failed", "Could not transcribe the audio file. {error}"),
-    ("transcript.copy", "Copy the transcript to the clipboard"),
-    ("transcript.save", "Save the transcript as a text file…{shortcut}"),
+    ("transcript.copy", "Copy text of the transcript to the clipboard"),
+    ("transcript.save", "Save text of the transcript as a file…{shortcut}"),
     ("transcript.copy_short", "Copy text"),
     ("transcript.save_short", "Save text…{shortcut}"),
     ("transcript.save_title", "Save the transcript"),
@@ -584,8 +584,9 @@ const ENGLISH: &[(&str, &str)] = &[
     ("video.failed", "Could not describe the video. {error}"),
     ("video.busy", "Wait for the app to finish what it is doing, or stop it, then choose the video again."),
     ("video.nothing", "There is no description yet.{open_hint}"),
-    ("video.copy", "Copy the description to the clipboard"),
+    ("video.copy", "Copy text of the description to the clipboard"),
     ("video.copy_short", "Copy text"),
+    ("video.save", "Save audio of the description…{shortcut}"),
     ("video.save_short", "Save audio…{shortcut}"),
     ("video.edit_title", "Edit the description?"),
     (
@@ -596,7 +597,7 @@ const ENGLISH: &[(&str, &str)] = &[
     ("video.edit", "Edit the description"),
     ("video.edit_short", "Edit"),
     (
-        "video.editing",
+        "video.editing_side_by_side",
         "Editing the description. The video is on the left and the description on the right, with the video's \
          controls under them.",
     ),
@@ -1305,12 +1306,14 @@ mod tests {
 
     #[test]
     fn every_key_used_in_the_code_has_english_text() {
-        let call = regex::Regex::new(r#"\b(?:tf?|short_key|short_and_full)\(\s*"([a-z_.]+)""#).unwrap();
+        let call = regex::Regex::new(r#"\b(?:tf?|short_key|short_and_full)\(\s*"([a-z_.]+)"(?:,\s*"([a-z_.]+)")?"#).unwrap();
         let mut count = 0;
         for source in SOURCES {
             for cap in call.captures_iter(source) {
                 count += 1;
-                assert!(english(&cap[1]).is_some(), "no English text for {}", &cap[1]);
+                for key in cap.iter().skip(1).flatten() {
+                    assert!(english(key.as_str()).is_some(), "no English text for {}", key.as_str());
+                }
             }
         }
         assert!(count > 100, "only found {count} uses of t() and tf()");
@@ -1347,6 +1350,25 @@ mod tests {
         let name = "notes.pdf";
         assert_eq!(render(Some(&fr), &[], "file.opening", &[("name", &name)]), "Ouverture de notes.pdf.");
         assert_eq!(render(Some(&fr), &[], "general.voice", &[]), "Voice");
+    }
+
+    /// Voice control users say the words they can see, so a button's full
+    /// name has to contain its short label.
+    #[test]
+    fn full_names_contain_their_short_labels() {
+        let mut count = 0;
+        for (key, text) in ENGLISH {
+            // This one is a message about a file being cut short, not a label.
+            if *key == "player.cut_short" {
+                continue;
+            }
+            let Some(full_key) = key.strip_suffix("_short") else { continue };
+            count += 1;
+            let full = english(full_key).unwrap_or_else(|| panic!("no full name for {key}")).to_lowercase();
+            let short = text.replace("{shortcut}", "").replace('…', "").to_lowercase();
+            assert!(full.contains(&short), "{full_key} does not contain \"{short}\"");
+        }
+        assert!(count > 10, "only found {count} short labels");
     }
 
     /// A translation without a button's short label uses its full one, in

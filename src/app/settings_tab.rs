@@ -82,6 +82,7 @@ impl SpeechApp {
     fn save_keys(&mut self) {
         let mut saved = Vec::new();
         let mut where_ = "";
+        let mut failure = None;
         for provider in Provider::ALL {
             let Some(name) = provider.key_name() else { continue };
             let Some(input) = self.key_inputs.get(&provider).map(|s| s.trim().to_owned()) else { continue };
@@ -95,21 +96,30 @@ impl SpeechApp {
                         self.api_keys.insert(provider, stored);
                     }
                     self.voices.remove(&provider);
+                    self.key_inputs.remove(&provider);
                     saved.push(provider.name());
                 }
                 Err(e) => {
-                    self.show_error(tf("keys.save_failed", &[("service", &provider.name()), ("error", &e)]));
-                    return;
+                    failure = Some(tf("keys.save_failed", &[("service", &provider.name()), ("error", &e)]));
+                    break;
                 }
             }
         }
-        self.key_inputs.clear();
-        if saved.is_empty() {
-            self.announce(t("keys.type_first"));
-        } else {
-            let services = saved.join(&format!(" {} ", t("keys.and")));
-            self.announce(tf("keys.saved", &[("services", &services), ("place", &where_)]));
-            self.cue(Cue::Success);
+        let services = saved.join(&format!(" {} ", t("keys.and")));
+        let done = tf("keys.saved", &[("services", &services), ("place", &where_)]);
+        match failure {
+            // Keys not saved stay in their boxes, to try again.
+            Some(failure) if saved.is_empty() => self.show_error(failure),
+            Some(failure) => self.show_error(format!("{done} {failure}")),
+            None if saved.is_empty() => {
+                self.key_inputs.clear();
+                self.announce(t("keys.type_first"));
+            }
+            None => {
+                self.key_inputs.clear();
+                self.announce(done);
+                self.cue(Cue::Success);
+            }
         }
     }
 

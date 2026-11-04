@@ -230,7 +230,7 @@ impl SpeechApp {
     fn edit_video_text(&mut self) {
         self.video.editing = true;
         self.video.focus_text = true;
-        self.announce(t("video.editing"));
+        self.announce(t("video.editing_side_by_side"));
     }
 
     /// Puts the tab back as it was, keeping the changes to the description.
@@ -377,7 +377,8 @@ impl SpeechApp {
         let stop = self.keyed("general.stop", Action::Stop);
         let stop_name = if describing { self.keyed("video.stop", Action::Stop) } else { stop.clone() };
         let save = self.keyed(short_key("video.save_short", "general.save"), Action::Save);
-        let save_name = self.keyed("general.save", Action::Save);
+        // A translation made before this name existed keeps its own words.
+        let save_name = self.keyed(short_key("video.save", "general.save"), Action::Save);
         let (copy, copy_name) = short_and_full("video.copy_short", "video.copy");
         let clicked = button_row(
             ui,
@@ -441,8 +442,8 @@ impl SpeechApp {
 
         let (play, play_name) = short_and_full("video.play_short", "video.play");
         let pause = self.keyed(if self.video.paused { "general.resume" } else { "general.pause" }, Action::Pause);
-        let stop = self.keyed("general.stop", Action::Stop);
-        let stop_name = self.keyed("video.stop_playing", Action::Stop);
+        // In full, as the row under this one has a Stop button of its own.
+        let stop = self.keyed("video.stop_playing", Action::Stop);
         let (back, back_name) = short_and_full("player.back_short", "player.back");
         let (forward, forward_name) = short_and_full("player.forward_short", "player.forward");
         let clicked = button_row(
@@ -450,7 +451,7 @@ impl SpeechApp {
             &[
                 (play.as_str(), play_name.as_str(), !playing && !speaking),
                 (pause.as_str(), pause.as_str(), playing),
-                (stop.as_str(), stop_name.as_str(), playing),
+                (stop.as_str(), stop.as_str(), playing),
                 (back.as_str(), back_name.as_str(), true),
                 (forward.as_str(), forward_name.as_str(), true),
             ],

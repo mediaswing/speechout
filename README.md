@@ -138,8 +138,8 @@ automatically.
 | Previous / Next | Only for a playlist. Moves to the track before or after, and plays it if the track you were on was playing. Screen readers call them "Previous track" and "Next track". |
 | Label who is speaking | Whether the transcript says who is speaking. Choose to have the app work out how many people there are, or choose the number yourself, which is more accurate. |
 | Transcribe | On one line with Show text, Copy text and Save text…. Writes down what is said. This happens by itself when a file sounds like speech; press this to try a file that didn't, or to transcribe again with a different model. While transcribing, it becomes **Stop transcribing**. Screen readers call it "Transcribe the speech". |
-| Show text | Shows the transcript text under the buttons, once a file has been transcribed. It becomes **Hide text**. The transcript is hidden again when another file or track opens. Screen readers call it "Show the transcript" (or "Hide the transcript"). |
-| Copy text / Save text… | Copies the transcript to the clipboard, or saves it as a text file. Screen readers call them "Copy the transcript to the clipboard" and "Save the transcript as a text file…". |
+| Show text | Shows the transcript text under the buttons, once a file has been transcribed. It becomes **Hide text**. The transcript is hidden again when another file or track opens. Screen readers call it "Show text of the transcript" (or "Hide text of the transcript"). |
+| Copy text / Save text… | Copies the transcript to the clipboard, or saves it as a text file. Screen readers call them "Copy text of the transcript to the clipboard" and "Save text of the transcript as a file…". |
 | Transcript text | Only once you press **Show text**. The words, in paragraphs, which start after a long pause or, when speakers are labelled, when someone else speaks. You can review it with a screen reader. |
 
 A zip file of WAV and MP3 files plays as a playlist: when one track ends, the
@@ -200,7 +200,7 @@ or on phone-quality audio. Choosing the number of people helps.
 | Progress bar | How far through describing the video the app is. |
 | Edit / Finish | On one line with Read aloud, Stop, Save audio… and Copy text. Edit shows the video and the description side by side (see below). Finish puts the tab back as it was, keeping your changes. Screen readers call them "Edit the description" and "Finish editing". |
 | Read aloud / Stop | Reads the description aloud: each picture's description, starting with when it comes, such as "At 1 minute 5 seconds:". While the video is being described, Stop stops describing, and screen readers call it "Stop describing the video". |
-| Save audio… / Copy text | Saves the description as spoken audio, or copies it to the clipboard. Screen readers call them "Save spoken text as audio…" and "Copy the description to the clipboard". |
+| Save audio… / Copy text | Saves the description as spoken audio, or copies it to the clipboard. Screen readers call them "Save audio of the description…" and "Copy text of the description to the clipboard". |
 
 The app uses ffmpeg to take the keyframes out of the video. These are the
 whole pictures a video is built from; the frames between them only record
@@ -214,7 +214,7 @@ When the video has been described, the app asks whether you'd like to edit
 the description. If you choose **No**, the tab stays as it is. If you choose
 **Yes** (or press **Edit** later), the video moves to the left and the
 description goes on the right in a box you can type in, which has the
-keyboard focus. Under them, on one line, **Play**, **Pause**, **Stop**,
+keyboard focus. Under them, on one line, **Play**, **Pause**, **Stop the video**,
 **Back** and **Forward** (10 seconds) work on the video, sound and all, and F6, F7 and Escape work on it as they do
 on an audio file. Read aloud, Save and Copy use the description as you've
 edited it. Reading aloud pauses the video, so you can hear the description

@@ -274,12 +274,13 @@ impl SpeechApp {
                 return self.transcribe_audio(intro);
             }
         }
+        let button = t(short_key("player.transcribe_short", "player.transcribe"));
         let note = match audio.sound {
             SoundKind::Silent => t("player.silent"),
-            SoundKind::Speech if audio.made_here => tf("player.made_here", &[("button", &t("player.transcribe"))]),
-            SoundKind::Speech => tf("playlist.not_transcribed", &[("button", &t("player.transcribe"))]),
+            SoundKind::Speech if audio.made_here => tf("player.made_here", &[("button", &button)]),
+            SoundKind::Speech => tf("playlist.not_transcribed", &[("button", &button)]),
             SoundKind::Other if playing => String::new(),
-            SoundKind::Other => tf("player.not_speech", &[("button", &t("player.transcribe"))]),
+            SoundKind::Other => tf("player.not_speech", &[("button", &button)]),
         };
         self.announce(format!("{intro} {note}").trim().to_owned());
         // Speech is transcribed next, and that gets the sound when it's done.
@@ -460,7 +461,7 @@ impl SpeechApp {
             .show()
             == rfd::MessageDialogResult::Yes;
         if !yes {
-            self.announce(tf("whisper.not_downloaded", &[("button", &t("player.transcribe"))]));
+            self.announce(tf("whisper.not_downloaded", &[("button", &t(short_key("player.transcribe_short", "player.transcribe")))]));
             return;
         }
         let control = Arc::new(Control::default());
@@ -495,8 +496,8 @@ impl SpeechApp {
                 // Keep it only if the same file is still chosen.
                 if self.player.audio.as_ref().is_some_and(|(p, _)| *p == path) {
                     self.player.transcript = done.text;
-                    let mut msg =
-                        tf("transcript.done", &[("name", &name), ("count", &done.words)]);
+                    let button = t(short_key("transcript.show_short", "transcript.show"));
+                    let mut msg = tf("transcript.done", &[("name", &name), ("count", &done.words), ("button", &button)]);
                     match done.speakers {
                         Some(1) => msg = format!("{msg} {}", t("speakers.found_one")),
                         Some(n) => msg = format!("{msg} {}", tf("speakers.found", &[("count", &n)])),

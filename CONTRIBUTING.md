@@ -118,7 +118,12 @@ A short label for a button in a row has its own key ending in `_short`, next
 to the full label's key. Use `short_and_full("x_short", "x")` (or `short_key`
 for a label that has a shortcut hint), so that a translation made before the
 short label existed shows the full label in its own language, not the short
-one in English.
+one in English. The full label must contain the short one's words, so that
+voice control can find the button by what it says, and a test checks this.
+
+If you change what a text means, not just its wording, give it a new key.
+Translations are only redone when a key is missing, so under the old key they
+would keep saying the old thing.
 
 ### 6. Few dependencies
 

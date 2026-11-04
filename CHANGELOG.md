@@ -9,6 +9,12 @@
 ### Fixed
 
 - Saving API keys now plays the success sound. Before, the only sign that a key had been saved was the message at the bottom of the window, so it could seem that nothing had happened.
+- If one API key can't be saved, the message now also says which keys were saved, and those keys are cleared from their boxes, so only the ones still to save remain. Before, you were told only about the failure.
+- Voice control can now press the buttons in the Audio Player and Describe Video rows by the words on them. "Show text", "Hide text", "Copy text", "Save text…" and "Save audio…" didn't match the names screen readers and voice control use, so those names now include the same words, such as "Copy text of the transcript to the clipboard". A translation you already have keeps its old names, because pressing the translate button only fills in what is missing.
+- The full name of a button in these rows now also shows when you point at it while it's greyed out.
+- Messages now name the Transcribe and Show text buttons as they appear. Before, they said "Transcribe the speech" and "Show the transcript". The Show text message is in English in an existing translation until you press the translate button again.
+- While you edit a video's description, the video's Stop button says "Stop the video" again, so it can't be mistaken for the Stop button below it, which stops reading aloud.
+- The message when you start editing a video's description now shows in English in an existing translation until you press the translate button again. Before, it kept saying the video's controls were on the left, under the video.
 
 ## [3.7.3] - 2026-11-02
 
