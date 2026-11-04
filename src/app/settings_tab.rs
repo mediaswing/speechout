@@ -34,10 +34,8 @@ impl SpeechApp {
             .show()
             == rfd::MessageDialogResult::Yes;
         if open {
-            match crate::platform::open_url(&release.url) {
-                Ok(()) => self.announce(tf("update.opened", &[("version", &release.version)])),
-                Err(e) => self.show_error(tf("update.open_failed", &[("error", &e), ("url", &release.url)])),
-            }
+            let opened = tf("update.opened", &[("version", &release.version)]);
+            self.open_page(&release.url, opened, |e| tf("update.open_failed", &[("error", e), ("url", &release.url)]));
         } else {
             self.announce(tf("update.later", &[("version", &release.version)]));
         }
@@ -54,10 +52,9 @@ impl SpeechApp {
     /// Opens the feedback form in the browser.
     pub(super) fn open_feedback(&mut self) {
         const FEEDBACK_FORM: &str = "https://www.cognitoforms.com/Mediastorm1/Soresp";
-        match crate::platform::open_url(FEEDBACK_FORM) {
-            Ok(()) => self.announce(t("feedback.opened")),
-            Err(e) => self.show_error(tf("feedback.open_failed", &[("error", &e), ("url", &FEEDBACK_FORM)])),
-        }
+        self.open_page(FEEDBACK_FORM, t("feedback.opened"), |e| {
+            tf("feedback.open_failed", &[("error", e), ("url", &FEEDBACK_FORM)])
+        });
     }
 
     fn check_for_update(&mut self) {
@@ -73,10 +70,8 @@ impl SpeechApp {
     fn open_key_page(&mut self, provider: Provider) {
         let Some(url) = provider.key_page() else { return };
         let service = provider.short_name();
-        match crate::platform::open_url(url) {
-            Ok(()) => self.announce(tf("keys.page_opened", &[("service", &service)])),
-            Err(e) => self.show_error(tf("keys.page_failed", &[("error", &e), ("service", &service), ("url", &url)])),
-        }
+        let opened = tf("keys.page_opened", &[("service", &service)]);
+        self.open_page(url, opened, |e| tf("keys.page_failed", &[("error", e), ("service", &service), ("url", &url)]));
     }
 
     fn save_keys(&mut self) {

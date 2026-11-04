@@ -75,18 +75,18 @@ pub(super) fn full_button(ui: &mut Ui, text: &str, enabled: bool) -> egui::Respo
         .inner
 }
 
-/// Buttons side by side on one line, as `(shown, name, enabled)`: `shown`
-/// is the label on the button, kept short so the row fits, and `name` is
+/// Buttons side by side on one line, as `(action, shown, name, enabled)`:
+/// `action` is what the button is for, `shown` is the label on the button, kept short so the row fits, and `name` is
 /// what screen readers say and the tooltip shows, which can be fuller but
 /// must contain the words of `shown`, for people using voice control.
-/// Returns which were clicked, in the same order.
+/// Returns the action of the button that was clicked, if any.
 ///
 /// The buttons share the width equally when every label fits that way, or
 /// else each is as wide as its label plus an equal share of what is left.
 /// Only when even that is too wide (a narrow window, or a long translation)
 /// do labels wrap, each line centred, with every button in the row as tall
 /// as the tallest so they stay level.
-pub(super) fn button_row(ui: &mut Ui, buttons: &[(&str, &str, bool)]) -> Vec<bool> {
+pub(super) fn button_row<A: Copy>(ui: &mut Ui, buttons: &[(A, &str, &str, bool)]) -> Option<A> {
     let count = buttons.len().max(1) as f32;
     let room = (ui.available_width() - ui.spacing().item_spacing.x * (count - 1.0)).max(count);
     let padding = egui::vec2(8.0, ui.spacing().button_padding.y);
@@ -97,7 +97,7 @@ pub(super) fn button_row(ui: &mut Ui, buttons: &[(&str, &str, bool)]) -> Vec<boo
         ui.fonts_mut(|f| f.layout_job(job))
     };
     let natural: Vec<f32> =
-        buttons.iter().map(|(shown, _, _)| layout(ui, shown, f32::INFINITY).size().x + 2.0 * padding.x).collect();
+        buttons.iter().map(|(_, shown, _, _)| layout(ui, shown, f32::INFINITY).size().x + 2.0 * padding.x).collect();
     let widest = natural.iter().copied().fold(0.0, f32::max);
     let total: f32 = natural.iter().sum();
     let widths: Vec<f32> = if widest * count <= room {
@@ -110,14 +110,14 @@ pub(super) fn button_row(ui: &mut Ui, buttons: &[(&str, &str, bool)]) -> Vec<boo
     let galleys: Vec<_> = buttons
         .iter()
         .zip(&widths)
-        .map(|((shown, _, _), width)| layout(ui, shown, (width - 2.0 * padding.x).max(1.0)))
+        .map(|((_, shown, _, _), width)| layout(ui, shown, (width - 2.0 * padding.x).max(1.0)))
         .collect();
     let tallest = galleys.iter().map(|g| g.size().y).fold(0.0, f32::max);
     let height = (tallest + 2.0 * padding.y).max(CONTROL_HEIGHT);
 
-    let mut clicked = vec![false; buttons.len()];
+    let mut clicked = None;
     ui.horizontal_top(|ui| {
-        for (i, (((shown, name, enabled), galley), width)) in buttons.iter().zip(galleys).zip(widths).enumerate() {
+        for (((action, shown, name, enabled), galley), width) in buttons.iter().zip(galleys).zip(widths) {
             let resp = ui
                 .add_enabled_ui(*enabled, |ui| {
                     let (rect, resp) = ui.allocate_exact_size([width, height].into(), egui::Sense::click());
@@ -138,7 +138,9 @@ pub(super) fn button_row(ui: &mut Ui, buttons: &[(&str, &str, bool)]) -> Vec<boo
                     if name != shown { resp.on_hover_text(*name).on_disabled_hover_text(*name) } else { resp }
                 })
                 .inner;
-            clicked[i] = resp.clicked();
+            if resp.clicked() {
+                clicked = Some(*action);
+            }
         }
     });
     clicked
@@ -407,6 +409,25 @@ mod tests {
         frame(&ctx, vec![], &mut ui_fn);
         assert_eq!(focused(&ctx), Some(field), "focus stays while the box is read-only");
         assert_eq!(entered.get(), 1);
+    }
+
+    /// Tab skips a greyed-out button, and the button pressed gives its action.
+    #[test]
+    fn button_row_reports_the_button_pressed() {
+        let ctx = egui::Context::default();
+        let pressed = std::cell::Cell::new(None);
+        let mut ui_fn = |ui: &mut Ui| {
+            let row = [("first", "First", "First", true), ("second", "Second", "Second", false), ("third", "Third", "Third", true)];
+            if let Some(action) = button_row(ui, &row) {
+                pressed.set(Some(action));
+            }
+        };
+        frame(&ctx, vec![], &mut ui_fn);
+        tab(&ctx, &mut ui_fn);
+        tab(&ctx, &mut ui_fn);
+        assert_eq!(pressed.get(), None);
+        frame(&ctx, vec![press(Key::Space, Modifiers::NONE)], &mut ui_fn);
+        assert_eq!(pressed.get(), Some("third"));
     }
 
     #[test]

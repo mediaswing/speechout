@@ -617,39 +617,37 @@ impl SpeechApp {
         let (forward, forward_name) = short_and_full("player.forward_short", "player.forward");
         let (previous, previous_name) = short_and_full("playlist.previous_short", "playlist.previous");
         let (next, next_name) = short_and_full("playlist.next_short", "playlist.next");
+        #[derive(Clone, Copy)]
+        enum Playback {
+            Play,
+            Pause,
+            Stop,
+            Back,
+            Forward,
+            Previous,
+            Next,
+        }
         let mut controls = vec![
-            (play_label.as_str(), play_label.as_str(), has_audio && !playing && !speaking),
-            (pause_label.as_str(), pause_label.as_str(), playing),
-            (stop_label.as_str(), stop_label.as_str(), playing || self.player.loader.is_some()),
-            (back.as_str(), back_name.as_str(), has_audio),
-            (forward.as_str(), forward_name.as_str(), has_audio),
+            (Playback::Play, play_label.as_str(), play_label.as_str(), has_audio && !playing && !speaking),
+            (Playback::Pause, pause_label.as_str(), pause_label.as_str(), playing),
+            (Playback::Stop, stop_label.as_str(), stop_label.as_str(), playing || self.player.loader.is_some()),
+            (Playback::Back, back.as_str(), back_name.as_str(), has_audio),
+            (Playback::Forward, forward.as_str(), forward_name.as_str(), has_audio),
         ];
         if self.player.playlist.is_some() {
             let can_change = self.player.loader.is_none();
-            controls.push((previous.as_str(), previous_name.as_str(), can_change));
-            controls.push((next.as_str(), next_name.as_str(), can_change));
+            controls.push((Playback::Previous, previous.as_str(), previous_name.as_str(), can_change));
+            controls.push((Playback::Next, next.as_str(), next_name.as_str(), can_change));
         }
-        let clicked = button_row(ui, &controls);
-        if clicked[0] {
-            self.play_audio();
-        }
-        if clicked[1] {
-            self.toggle_audio_pause();
-        }
-        if clicked[2] {
-            self.stop_audio();
-        }
-        if clicked[3] {
-            self.skip_audio(-10.0);
-        }
-        if clicked[4] {
-            self.skip_audio(10.0);
-        }
-        if clicked.get(5) == Some(&true) {
-            self.change_track(false);
-        }
-        if clicked.get(6) == Some(&true) {
-            self.change_track(true);
+        match button_row(ui, &controls) {
+            Some(Playback::Play) => self.play_audio(),
+            Some(Playback::Pause) => self.toggle_audio_pause(),
+            Some(Playback::Stop) => self.stop_audio(),
+            Some(Playback::Back) => self.skip_audio(-10.0),
+            Some(Playback::Forward) => self.skip_audio(10.0),
+            Some(Playback::Previous) => self.change_track(false),
+            Some(Playback::Next) => self.change_track(true),
+            None => {}
         }
 
         ui.add_space(8.0);
@@ -680,31 +678,32 @@ impl SpeechApp {
         let (copy, copy_name) = short_and_full("transcript.copy_short", "transcript.copy");
         let save = self.keyed(short_key("transcript.save_short", "transcript.save"), Action::Save);
         let save_name = self.keyed("transcript.save", Action::Save);
+        #[derive(Clone, Copy)]
+        enum TranscriptButton {
+            Transcribe,
+            Toggle,
+            Copy,
+            Save,
+        }
         let clicked = button_row(
             ui,
             &[
-                (transcribe.as_str(), transcribe_name.as_str(), can_transcribe),
-                (toggle.as_str(), toggle_name.as_str(), has_transcript),
-                (copy.as_str(), copy_name.as_str(), has_transcript),
-                (save.as_str(), save_name.as_str(), has_transcript),
+                (TranscriptButton::Transcribe, transcribe.as_str(), transcribe_name.as_str(), can_transcribe),
+                (TranscriptButton::Toggle, toggle.as_str(), toggle_name.as_str(), has_transcript),
+                (TranscriptButton::Copy, copy.as_str(), copy_name.as_str(), has_transcript),
+                (TranscriptButton::Save, save.as_str(), save_name.as_str(), has_transcript),
             ],
         );
-        if clicked[0] {
-            if transcribing {
-                self.stop();
-            } else {
-                self.transcribe_audio(String::new());
+        match clicked {
+            Some(TranscriptButton::Transcribe) if transcribing => self.stop(),
+            Some(TranscriptButton::Transcribe) => self.transcribe_audio(String::new()),
+            Some(TranscriptButton::Toggle) => self.player.show_transcript = !self.player.show_transcript,
+            Some(TranscriptButton::Copy) => {
+                let ctx = ui.ctx().clone();
+                self.copy_transcript(&ctx);
             }
-        }
-        if clicked[1] {
-            self.player.show_transcript = !self.player.show_transcript;
-        }
-        if clicked[2] {
-            let ctx = ui.ctx().clone();
-            self.copy_transcript(&ctx);
-        }
-        if clicked[3] {
-            self.save_transcript();
+            Some(TranscriptButton::Save) => self.save_transcript(),
+            None => {}
         }
         if self.player.show_transcript && has_transcript {
             text_area(ui, &t("transcript.label"), &self.player.transcript);

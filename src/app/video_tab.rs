@@ -177,10 +177,8 @@ impl SpeechApp {
         }
         let Some(manager) = manager else {
             const DOWNLOAD_PAGE: &str = "https://ffmpeg.org/download.html";
-            match crate::platform::open_url(DOWNLOAD_PAGE) {
-                Ok(()) => self.announce(t(key("ffmpeg.page_opened", "ffmpeg.page_opened_audio"))),
-                Err(e) => self.show_error(tf("ffmpeg.page_failed", &[("error", &e), ("url", &DOWNLOAD_PAGE)])),
-            }
+            let opened = t(key("ffmpeg.page_opened", "ffmpeg.page_opened_audio"));
+            self.open_page(DOWNLOAD_PAGE, opened, |e| tf("ffmpeg.page_failed", &[("error", e), ("url", &DOWNLOAD_PAGE)]));
             return;
         };
         self.setting_up_ffmpeg = true;
@@ -380,35 +378,35 @@ impl SpeechApp {
         // A translation made before this name existed keeps its own words.
         let save_name = self.keyed(short_key("video.save", "general.save"), Action::Save);
         let (copy, copy_name) = short_and_full("video.copy_short", "video.copy");
+        #[derive(Clone, Copy)]
+        enum Description {
+            Edit,
+            Read,
+            Stop,
+            Save,
+            Copy,
+        }
         let clicked = button_row(
             ui,
             &[
-                (edit.as_str(), edit_name.as_str(), can_edit),
-                (read.as_str(), read.as_str(), has_text && !self.is_busy()),
-                (stop.as_str(), stop_name.as_str(), self.is_busy()),
-                (save.as_str(), save_name.as_str(), has_text && !self.is_busy()),
-                (copy.as_str(), copy_name.as_str(), has_text),
+                (Description::Edit, edit.as_str(), edit_name.as_str(), can_edit),
+                (Description::Read, read.as_str(), read.as_str(), has_text && !self.is_busy()),
+                (Description::Stop, stop.as_str(), stop_name.as_str(), self.is_busy()),
+                (Description::Save, save.as_str(), save_name.as_str(), has_text && !self.is_busy()),
+                (Description::Copy, copy.as_str(), copy_name.as_str(), has_text),
             ],
         );
-        if clicked[0] {
-            if self.video.editing {
-                self.finish_editing_video();
-            } else {
-                self.edit_video_text();
+        match clicked {
+            Some(Description::Edit) if self.video.editing => self.finish_editing_video(),
+            Some(Description::Edit) => self.edit_video_text(),
+            Some(Description::Read) => self.read_aloud(),
+            Some(Description::Stop) => self.stop(),
+            Some(Description::Save) => self.save_audio(),
+            Some(Description::Copy) => {
+                let ctx = ui.ctx().clone();
+                self.copy_text(&ctx);
             }
-        }
-        if clicked[1] {
-            self.read_aloud();
-        }
-        if clicked[2] {
-            self.stop();
-        }
-        if clicked[3] {
-            self.save_audio();
-        }
-        if clicked[4] {
-            let ctx = ui.ctx().clone();
-            self.copy_text(&ctx);
+            None => {}
         }
     }
 
@@ -446,30 +444,31 @@ impl SpeechApp {
         let stop = self.keyed("video.stop_playing", Action::Stop);
         let (back, back_name) = short_and_full("player.back_short", "player.back");
         let (forward, forward_name) = short_and_full("player.forward_short", "player.forward");
+        #[derive(Clone, Copy)]
+        enum Playback {
+            Play,
+            Pause,
+            Stop,
+            Back,
+            Forward,
+        }
         let clicked = button_row(
             ui,
             &[
-                (play.as_str(), play_name.as_str(), !playing && !speaking),
-                (pause.as_str(), pause.as_str(), playing),
-                (stop.as_str(), stop.as_str(), playing),
-                (back.as_str(), back_name.as_str(), true),
-                (forward.as_str(), forward_name.as_str(), true),
+                (Playback::Play, play.as_str(), play_name.as_str(), !playing && !speaking),
+                (Playback::Pause, pause.as_str(), pause.as_str(), playing),
+                (Playback::Stop, stop.as_str(), stop.as_str(), playing),
+                (Playback::Back, back.as_str(), back_name.as_str(), true),
+                (Playback::Forward, forward.as_str(), forward_name.as_str(), true),
             ],
         );
-        if clicked[0] {
-            self.play_video();
-        }
-        if clicked[1] {
-            self.toggle_video_pause();
-        }
-        if clicked[2] {
-            self.stop_video();
-        }
-        if clicked[3] {
-            self.skip_video(-10.0);
-        }
-        if clicked[4] {
-            self.skip_video(10.0);
+        match clicked {
+            Some(Playback::Play) => self.play_video(),
+            Some(Playback::Pause) => self.toggle_video_pause(),
+            Some(Playback::Stop) => self.stop_video(),
+            Some(Playback::Back) => self.skip_video(-10.0),
+            Some(Playback::Forward) => self.skip_video(10.0),
+            None => {}
         }
     }
 }

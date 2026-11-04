@@ -282,6 +282,15 @@ impl SpeechApp {
             .show();
     }
 
+    /// Opens `url` in the web browser and announces `opened`, or if it can't,
+    /// reports the message `failed` makes from the error.
+    fn open_page(&mut self, url: &str, opened: String, failed: impl FnOnce(&anyhow::Error) -> String) {
+        match crate::platform::open_url(url) {
+            Ok(()) => self.announce(opened),
+            Err(e) => self.show_error(failed(&e)),
+        }
+    }
+
     /// Plays the success or failure sound, unless sounds are turned off or
     /// speech or an audio file is playing, which it would talk over.
     fn cue(&mut self, cue: Cue) {

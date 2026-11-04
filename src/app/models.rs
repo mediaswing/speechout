@@ -191,10 +191,9 @@ impl SpeechApp {
         }
         if !installed && manager.is_none() {
             const DOWNLOAD_PAGE: &str = "https://ollama.com/download";
-            match crate::platform::open_url(DOWNLOAD_PAGE) {
-                Ok(()) => self.announce(t("ollama.page_opened")),
-                Err(e) => self.show_error(tf("ollama.page_failed", &[("error", &e), ("url", &DOWNLOAD_PAGE)])),
-            }
+            self.open_page(DOWNLOAD_PAGE, t("ollama.page_opened"), |e| {
+                tf("ollama.page_failed", &[("error", e), ("url", &DOWNLOAD_PAGE)])
+            });
             return;
         }
         self.setting_up_ollama = true;
