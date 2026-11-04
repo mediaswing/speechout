@@ -1,5 +1,11 @@
 # Changelog
 
+## [Unreleased]
+
+### Fixed
+
+- Saving API keys now plays the success sound. Before, the only sign that a key had been saved was the message at the bottom of the window, so it could seem that nothing had happened.
+
 ## [3.7.3] - 2026-11-02
 
 ### Changed

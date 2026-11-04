@@ -99,6 +99,7 @@ impl SpeechApp {
         } else {
             let services = saved.join(&format!(" {} ", t("keys.and")));
             self.announce(tf("keys.saved", &[("services", &services), ("place", &where_)]));
+            self.cue(Cue::Success);
         }
     }
 
