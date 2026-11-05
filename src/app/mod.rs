@@ -386,11 +386,12 @@ impl SpeechApp {
                 Msg::Status(s) => self.announce(s),
                 Msg::Progress(p) => self.progress = p.clamp(0.0, 1.0),
                 Msg::Done(s, finished) => {
-                    // A preview ending is not worth a sound.
+                    // Only saving needs a sound: speech ending is plain to
+                    // hear, and hearing it start already showed it worked.
                     let job = self.job.take().map(|(kind, _)| kind);
                     self.paused = false;
                     self.announce(s);
-                    if finished && matches!(job, Some(JobKind::Speaking | JobKind::Saving)) {
+                    if finished && matches!(job, Some(JobKind::Saving)) {
                         self.cue(Cue::Success);
                     }
                 }

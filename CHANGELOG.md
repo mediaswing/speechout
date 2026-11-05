@@ -1,5 +1,11 @@
 # Changelog
 
+## [Unreleased]
+
+### Changed
+
+- The success sound no longer plays when reading aloud reaches the end, because hearing the speech already tells you it worked. It still plays when you save audio, and the failure sound still plays if reading aloud goes wrong.
+
 ## [3.7.4] - 2026-11-04
 
 ### Added

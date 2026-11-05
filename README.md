@@ -274,8 +274,9 @@ up, as it does for photos.
   each part starts with "This is part 1 of 3", or the parts run on with no
   announcement, with only the usual short pause between sentences.
 - **Sounds**: whether to play a short sound when something succeeds (a file
-  opens, reading aloud reaches the end, audio is saved, a transcript is done)
-  or fails (whenever an error is shown). Sounds never play over speech or an
+  opens, audio is saved, a transcript is done) or fails (whenever an error is
+  shown). Reading aloud has no success sound, because you can hear that it's
+  working. Sounds never play over speech or an
   audio file that is playing, and starting either cuts off a sound already
   playing. On by default.
 - **Updates**: whether to check GitHub for a new version when the app starts,
