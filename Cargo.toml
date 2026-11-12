@@ -1,0 +1,84 @@
+[package]
+name = "commonspeech"
+version = "5.0.0"
+edition = "2024"
+# The newest that any dependency needs.
+rust-version = "1.95"
+description = "Common Speech Output: an accessible text-to-speech reader for documents and images"
+license = "MIT"
+readme = "README.md"
+repository = "https://github.com/mediaswing/speechout"
+publish = false
+# The executable is `speechout`; the app is still "Common Speech Output".
+autobins = false
+
+[[bin]]
+name = "speechout"
+path = "src/main.rs"
+
+[dependencies]
+anyhow = "1"
+base64 = "0.23"
+dirs = "6"
+eframe = { version = "0.37", default-features = false, features = ["accesskit", "clipboard", "default_fonts", "glow", "links", "wayland", "x11"] }
+# The emoji font has the icons on the tabs, whatever fonts the computer has.
+egui = { version = "0.37", features = ["monochrome_emoji_fonts"] }
+encoding_rs = "0.8"
+# Only JPEG: HEIF/HEIC photos are turned into JPEG by src/platform first.
+image = { version = "0.25", default-features = false, features = ["jpeg"] }
+kamadak-exif = "0.6"
+log = "0.4"
+mp3lame-encoder = "0.2"
+pdf-extract = "0.12"
+quick-xml = "0.42"
+regex = "1"
+rfd = "0.17"
+rodio = { version = "0.22", default-features = false, features = ["playback", "mp3", "wav", "symphonia-mp3", "symphonia-wav"] }
+rusqlite = { version = "0.41", features = ["bundled"] }
+serde_json = "1"
+# Checks the speech recognition model is the one expected.
+sha2 = "0.10"
+tempfile = "3"
+ureq = { version = "3", default-features = false, features = ["rustls", "json"] }
+url = "2"
+zip = { version = "9", default-features = false, features = ["deflate"] }
+
+[dev-dependencies]
+egui_kittest = "0.37"
+
+[build-dependencies]
+# Embeds the icon in the Windows executable.
+winresource = "0.1"
+
+[features]
+# Windows only: decode HEIC photos with libheif and libde265 built into the
+# app, so no Microsoft Store add-ons are needed. Needs libheif installed with
+# vcpkg; the release workflow turns this on.
+bundled-heif = ["dep:libheif-rs"]
+
+[target.'cfg(windows)'.dependencies]
+libheif-rs = { version = "3", optional = true }
+windows = { version = "0.62", features = [
+    "Foundation",
+    "Foundation_Collections",
+    "Media_Core",
+    "Media_SpeechSynthesis",
+    "Storage_Streams",
+    "Win32_Foundation",
+    "Win32_Graphics_Imaging",
+    "Win32_System_Com",
+    "Win32_UI_Shell",
+    "Win32_UI_WindowsAndMessaging",
+] }
+windows-future = "0.3"
+
+# Release packaging (src/package/linux.rs): builds the .deb in Rust.
+[target.'cfg(all(unix, not(target_os = "macos")))'.dependencies]
+tar = "0.4"
+# Compresses the .deb. Static, so the app doesn't link the system liblzma.
+xz2 = { version = "0.1", features = ["static"] }
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = true

@@ -1,0 +1,113 @@
+# Builds and tests the app on Windows, Ubuntu and macOS for every push to main
+# and every pull request. Each system's own code, in src/platform and
+# src/package, can only be compiled on that system, so without this it would only
+# be built when a release is tagged (see release.yml).
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# A newer push to the same branch or pull request makes an older run pointless.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  windows:
+    name: Windows
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+        with:
+          toolchain: stable
+          components: clippy
+      # The prefix keeps these caches apart from the release workflow's, so what
+      # CI saves can never change how a release is built.
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          prefix-key: v1-rust-ci
+      - name: Install the WiX Toolset
+        shell: pwsh
+        run: |
+          dotnet tool install --global wix --version 6.0.2
+          "$env:USERPROFILE\.dotnet\tools" >> $env:GITHUB_PATH
+      # Each system's own code is only linted on that system.
+      - run: cargo clippy --locked --all-targets -- -D warnings
+      # Among the tests, builds_msi packages the test build as an .msi.
+      - run: cargo test --locked
+
+  ubuntu:
+    name: Ubuntu
+    # As in release.yml: the oldest supported Ubuntu LTS.
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: awalsh128/cache-apt-pkgs-action@553a35bb8ebd9fcabcb1c9451aa4c98e1b4ca8a9 # v1.6.3
+        with:
+          packages: >-
+            espeak-ng pkg-config libasound2-dev libxkbcommon-dev libwayland-dev
+            libgl1-mesa-dev libx11-dev libxcursor-dev libxrandr-dev libxi-dev
+          version: 1
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+        with:
+          toolchain: stable
+          components: clippy
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          prefix-key: v1-rust-ci
+      # Each system's own code is only linted on that system.
+      - run: cargo clippy --locked --all-targets -- -D warnings
+      # Among the tests, builds_valid_deb checks a .deb with dpkg-deb.
+      - run: cargo test --locked
+
+  macos:
+    name: macOS (Apple Silicon)
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+        with:
+          toolchain: stable
+          components: clippy
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          prefix-key: v1-rust-ci
+      # Each system's own code is only linted on that system.
+      - run: cargo clippy --locked --all-targets -- -D warnings
+      # Among the tests, builds_ad_hoc_signed_pkg packages the test build and
+      # checks the signature, and others use the real system voices.
+      - run: cargo test --locked
+
+  audit:
+    name: Dependency audit
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+        with:
+          toolchain: stable
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          prefix-key: v1-rust-ci
+      - run: cargo install cargo-audit --locked
+      # Fails on known vulnerabilities in anything Cargo.lock pulls in.
+      - run: cargo audit

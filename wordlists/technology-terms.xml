@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Example pronunciation wordlist for Common Speech Output.
+
+  Spells out or respells technical terms that speech engines tend to stumble
+  over. Most entries only match in capitals, so that a word in ordinary text
+  that happens to be spelled the same isn't changed.
+-->
+<wordlist name="Technology terms" description="Helps voices pronounce abbreviations and names from computing">
+  <entry match="API" replace="A P I" case-sensitive="true"/>
+  <entry match="APIs" replace="A P Is" case-sensitive="true"/>
+  <entry match="ASCII" replace="askee" case-sensitive="true"/>
+  <entry match="C#" replace="C sharp"/>
+  <entry match="C++" replace="C plus plus"/>
+  <entry match="CLI" replace="C L I" case-sensitive="true"/>
+  <entry match="CSV" replace="C S V" case-sensitive="true"/>
+  <entry match="DOCX" replace="doc X" case-sensitive="true"/>
+  <entry match="F#" replace="F sharp"/>
+  <entry match="GIF" replace="gif" case-sensitive="true"/>
+  <entry match="GitHub" replace="Git Hub"/>
+  <entry match="GUI" replace="gooey" case-sensitive="true"/>
+  <entry match="HEIC" replace="heek" case-sensitive="true"/>
+  <entry match="HEIF" replace="heef" case-sensitive="true"/>
+  <entry match="HTTP" replace="H T T P" case-sensitive="true"/>
+  <entry match="HTTPS" replace="H T T P S" case-sensitive="true"/>
+  <entry match="iOS" replace="eye O S" case-sensitive="true"/>
+  <entry match="JSON" replace="jay-son" case-sensitive="true"/>
+  <entry match="Kubernetes" replace="Koo-ber-net-eez"/>
+  <entry match="Linux" replace="Linnucks"/>
+  <entry match="macOS" replace="Mac O S" case-sensitive="true"/>
+  <entry match="MySQL" replace="My sequel"/>
+  <entry match="NVDA" replace="N V D A" case-sensitive="true"/>
+  <entry match="PDF" replace="P D F" case-sensitive="true"/>
+  <entry match="PostgreSQL" replace="Post-gres sequel"/>
+  <entry match="SQL" replace="sequel" case-sensitive="true"/>
+  <entry match="SQLite" replace="sequel light"/>
+  <entry match="sudo" replace="soo-doo" case-sensitive="true"/>
+  <entry match="TTS" replace="T T S" case-sensitive="true"/>
+  <entry match="Ubuntu" replace="Oo-boon-too"/>
+  <entry match="URL" replace="U R L" case-sensitive="true"/>
+  <entry match="USB" replace="U S B" case-sensitive="true"/>
+  <entry match="WCAG" replace="wuh-cag" case-sensitive="true"/>
+  <entry match="Wi-Fi" replace="why-fie"/>
+  <entry match="XML" replace="X M L" case-sensitive="true"/>
+</wordlist>

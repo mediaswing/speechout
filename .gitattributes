@@ -1,0 +1,2 @@
+# Binary test documents must never have their line endings changed.
+tests/fixtures/** -text

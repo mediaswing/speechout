@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Example pronunciation wordlist for Common Speech Output.
+
+  Speech engines often read British place names as they are spelled. Each
+  entry respells a name so that it comes out the way local people say it.
+  Respellings work best when you try them with the voice you use: voices
+  differ, so adjust them if one doesn't sound right.
+-->
+<wordlist name="UK place names" description="Helps voices pronounce British place names">
+  <entry match="Alnwick" replace="Annick"/>
+  <entry match="Bicester" replace="Bister"/>
+  <entry match="Beaulieu" replace="Bewley"/>
+  <entry match="Belvoir" replace="Beaver"/>
+  <entry match="Berwick" replace="Berrick"/>
+  <entry match="Birmingham" replace="Birming-um"/>
+  <entry match="Cholmondeley" replace="Chumley"/>
+  <entry match="Cirencester" replace="Siren-sester"/>
+  <entry match="Durham" replace="Durrum"/>
+  <entry match="Edinburgh" replace="Edinbruh"/>
+  <entry match="Featherstonehaugh" replace="Fanshaw"/>
+  <entry match="Fowey" replace="Foy"/>
+  <entry match="Gloucester" replace="Gloster"/>
+  <entry match="Greenwich" replace="Grennitch"/>
+  <entry match="Happisburgh" replace="Haze-bruh"/>
+  <entry match="Harwich" replace="Harritch"/>
+  <entry match="Keighley" replace="Keethley"/>
+  <entry match="Launceston" replace="Lawnston"/>
+  <entry match="Leicester" replace="Lester"/>
+  <entry match="Leominster" replace="Lemster"/>
+  <entry match="Loughborough" replace="Luff-bruh"/>
+  <entry match="Marylebone" replace="Marly-bun"/>
+  <entry match="Mousehole" replace="Mowzel"/>
+  <entry match="Norwich" replace="Norritch"/>
+  <entry match="Salisbury" replace="Sawlz-bree"/>
+  <entry match="Shrewsbury" replace="Shrowz-bree"/>
+  <entry match="Southwark" replace="Suthuck"/>
+  <entry match="Slough" replace="Slow" case-sensitive="true"/>
+  <entry match="Warwick" replace="Worrick"/>
+  <entry match="Wednesbury" replace="Wenz-bree"/>
+  <entry match="Woolfardisworthy" replace="Woolsery"/>
+  <entry match="Worcester" replace="Wooster"/>
+</wordlist>

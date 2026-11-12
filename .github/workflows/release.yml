@@ -1,0 +1,251 @@
+# Builds the release downloads when a version tag (for example v1.0.0) is pushed,
+# and publishes them on a GitHub release whose text comes from the matching
+# section of CHANGELOG.md.
+#
+# Packaging is done by the app itself:
+#   * macOS (Apple Silicon): `speechout --package-macos dist`
+#     (src/package/macos.rs) builds the .app bundle, signs it ad hoc, wraps it in
+#     an installer package (.pkg) and checks the result. There is no shell code.
+#   * Ubuntu: `speechout --package-deb dist` (src/package/linux.rs) writes the
+#     .deb.
+#   * Windows: `speechout --package-msi dist` (src/package/windows.rs) writes
+#     the WiX source for an .msi and builds it with the WiX Toolset. The job runs
+#     twice, on x64 and Arm runners, each building and testing an MSI natively.
+#
+# Actions are pinned to full commit hashes, because tags can be moved, and this
+# workflow publishes what people install.
+
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  # The app's version (shown by --version and used to name the packages) comes
+  # from Cargo.toml, so check it matches the tag before anything is built.
+  version:
+    name: Check the tag matches Cargo.toml
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          tag="${TAG#v}"
+          cargo=$(awk -F'"' '/^\[/ { section = $0 } section == "[package]" && /^version *=/ { print $2; exit }' Cargo.toml)
+          if [ "$tag" != "$cargo" ]; then
+            echo "::error::The tag $TAG doesn't match version \"$cargo\" in Cargo.toml."
+            exit 1
+          fi
+          echo "Version: $cargo"
+
+  macos:
+    name: macOS .pkg (Apple Silicon)
+    needs: version
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+        with:
+          toolchain: stable
+          targets: aarch64-apple-darwin
+      # The prefix keeps these caches apart from CI's (ci.yml uses v1-rust-ci).
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          prefix-key: v1-rust
+      - run: cargo test --locked
+      - run: cargo build --release --locked --target aarch64-apple-darwin
+      - run: target/aarch64-apple-darwin/release/speechout --package-macos dist
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: macos
+          path: dist/*.pkg
+          if-no-files-found: error
+
+  linux:
+    name: Ubuntu .deb (amd64)
+    needs: version
+    # The oldest supported Ubuntu LTS, so the package installs on 22.04 and later.
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: awalsh128/cache-apt-pkgs-action@553a35bb8ebd9fcabcb1c9451aa4c98e1b4ca8a9 # v1.6.3
+        with:
+          packages: >-
+            espeak-ng pkg-config libasound2-dev libxkbcommon-dev libwayland-dev
+            libgl1-mesa-dev libx11-dev libxcursor-dev libxrandr-dev libxi-dev
+          version: 1
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+        with:
+          toolchain: stable
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          prefix-key: v1-rust
+      # Among the tests, builds_valid_deb checks a .deb with dpkg-deb.
+      - run: cargo test --locked
+      - run: cargo build --release --locked
+      - run: target/release/speechout --package-deb dist
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: linux
+          path: dist/*.deb
+          if-no-files-found: error
+
+  windows:
+    name: Windows .msi (${{ matrix.arch }})
+    needs: version
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      # Let both builds finish, so a failure in one doesn't hide the other's.
+      fail-fast: false
+      matrix:
+        include:
+          # arch names the download; triplet is vcpkg's name for the target and
+          # msvc the Visual C++ folder name.
+          - arch: x86_64
+            runner: windows-latest
+            triplet: x64-windows-static-md
+            msvc: x64
+          - arch: arm64
+            runner: windows-11-arm
+            triplet: arm64-windows-static-md
+            msvc: arm64
+    env:
+      # libheif and libde265 are built into speechout.exe (the bundled-heif
+      # feature), so HEIC photos need no Microsoft Store add-ons.
+      VCPKGRS_TRIPLET: ${{ matrix.triplet }}
+      VCPKG_DEFAULT_BINARY_CACHE: ${{ github.workspace }}\vcpkg-cache
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      # Windows Installer versions are three numbers, the first two at most 255
+      # and the third at most 65535, so check before the long build.
+      - name: Check the tag can be an MSI version
+        shell: pwsh
+        run: |
+          $version = $env:GITHUB_REF_NAME.TrimStart('v')
+          if ($version -notmatch '^(0|[1-9][0-9]{0,2})\.(0|[1-9][0-9]{0,2})\.(0|[1-9][0-9]{0,4})$' -or
+              [int]$Matches[1] -gt 255 -or [int]$Matches[2] -gt 255 -or [int]$Matches[3] -gt 65535) {
+            Write-Host "::error::The tag $env:GITHUB_REF_NAME can't be used as a Windows Installer version."
+            exit 1
+          }
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+        with:
+          toolchain: stable
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          prefix-key: v1-rust
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: vcpkg-cache
+          key: vcpkg-libheif-${{ matrix.triplet }}-${{ hashFiles('Cargo.lock') }}
+          restore-keys: vcpkg-libheif-${{ matrix.triplet }}-
+      # The runner image includes vcpkg.
+      - name: Install libheif with vcpkg
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force $env:VCPKG_DEFAULT_BINARY_CACHE | Out-Null
+          # libheif 1.23.6 made its HEIC decoder, libde265, a default feature,
+          # which [core] leaves out; older ports always build it.
+          $port = Get-Content "$env:VCPKG_INSTALLATION_ROOT\ports\libheif\vcpkg.json" -Raw | ConvertFrom-Json
+          $features = if ($port.features.PSObject.Properties.Name -contains 'libde265') { 'core,libde265' } else { 'core' }
+          & "$env:VCPKG_INSTALLATION_ROOT\vcpkg.exe" install "libheif[$features]:${{ matrix.triplet }}" --disable-metrics
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          "VCPKG_ROOT=$env:VCPKG_INSTALLATION_ROOT" >> $env:GITHUB_ENV
+      - name: Install the WiX Toolset
+        shell: pwsh
+        run: |
+          dotnet tool install --global wix --version 6.0.2
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          "$env:USERPROFILE\.dotnet\tools" >> $env:GITHUB_PATH
+      - run: cargo test --locked --features bundled-heif
+      - run: cargo build --release --locked --features bundled-heif
+      # Puts the exe beside the Visual C++ runtime DLLs it imports, so it runs on
+      # PCs without the Redistributable. The list comes from the exe's own
+      # imports; DLLs that are part of Windows aren't copied. The packager puts
+      # every DLL beside the exe into the MSI.
+      - name: Stage the exe with its DLLs
+        shell: pwsh
+        run: |
+          $vs = & "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe" -latest -products * -property installationPath
+          $dumpbin = Get-ChildItem "$vs\VC\Tools\MSVC\*\bin\Host*\${{ matrix.msvc }}\dumpbin.exe" | Select-Object -Last 1
+          $crt = Get-ChildItem "$vs\VC\Redist\MSVC\*\${{ matrix.msvc }}\Microsoft.VC*.CRT" -Directory | Select-Object -Last 1
+          if (-not $dumpbin -or -not $crt) { throw "Visual C++ tools or runtime not found under $vs" }
+          $imports = & $dumpbin.FullName /nologo /dependents target\release\speechout.exe |
+            ForEach-Object { $_.Trim() } | Where-Object { $_ -like '*.dll' }
+          $dlls = @($imports | ForEach-Object { Join-Path $crt.FullName $_ } | Where-Object { Test-Path $_ })
+          if (-not $dlls) { throw "No Visual C++ runtime DLLs found in the exe's imports: $($imports -join ', ')" }
+          New-Item -ItemType Directory -Force stage | Out-Null
+          Copy-Item -Path (@('target\release\speechout.exe') + $dlls) -Destination stage
+          Write-Host "Staged:" (Get-ChildItem stage).Name
+      - name: Build the .msi
+        shell: pwsh
+        run: |
+          stage\speechout.exe --package-msi dist | Out-Host
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      # Install quietly (the runner is an administrator, so there's no UAC
+      # prompt), check the app and its shortcut, then uninstall it again.
+      - name: Test installing the .msi
+        shell: pwsh
+        run: |
+          $msi = (Get-ChildItem dist/*.msi).FullName
+          $log = "$env:RUNNER_TEMP\msi-install.log"
+          $p = Start-Process msiexec.exe -ArgumentList "/i `"$msi`" /qn /l*v `"$log`"" -Wait -PassThru
+          if ($p.ExitCode -ne 0) { Get-Content $log -Tail 50; throw "msiexec /i exited with $($p.ExitCode)" }
+          $app = "$env:ProgramFiles\Common Speech Output\speechout.exe"
+          $shortcut = "$env:ProgramData\Microsoft\Windows\Start Menu\Programs\Common Speech Output.lnk"
+          if (-not (Test-Path $shortcut)) { throw "no Start menu shortcut at $shortcut" }
+          $out = "$env:RUNNER_TEMP\version.txt"
+          $p = Start-Process $app -ArgumentList '--version' -RedirectStandardOutput $out -Wait -PassThru
+          if ($p.ExitCode -ne 0) { throw "The installed app failed to start (exit code $($p.ExitCode))" }
+          Write-Host "Installed app says:" (Get-Content $out)
+          $p = Start-Process msiexec.exe -ArgumentList "/x `"$msi`" /qn" -Wait -PassThru
+          if ($p.ExitCode -ne 0) { throw "msiexec /x exited with $($p.ExitCode)" }
+          if (Test-Path $app) { throw "uninstalling left $app behind" }
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: windows-${{ matrix.arch }}
+          path: dist/*.msi
+          if-no-files-found: error
+
+  release:
+    name: Publish release
+    needs: [macos, linux, windows]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Read release notes from CHANGELOG.md
+        uses: ffurrer2/extract-release-notes@273da39a24fb7db106a35526c8162815faffd31d # v3.1.0
+        with:
+          release_notes_file: release-notes.md
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          path: artifacts
+          merge-multiple: true
+      - uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3.0.3
+        with:
+          body_path: release-notes.md
+          files: |
+            artifacts/*.deb
+            artifacts/*.pkg
+            artifacts/*.msi
+          fail_on_unmatched_files: true
