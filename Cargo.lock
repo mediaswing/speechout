@@ -727,7 +727,7 @@ dependencies = [
 
 [[package]]
 name = "commonspeech"
-version = "5.1.1"
+version = "5.1.2"
 dependencies = [
  "anyhow",
  "base64",

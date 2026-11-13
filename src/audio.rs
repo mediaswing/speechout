@@ -30,22 +30,6 @@ pub fn decode(bytes: Vec<u8>) -> anyhow::Result<Pcm> {
     Ok(Pcm { samples, rate })
 }
 
-/// Joins pieces of speech. All the pieces come from one voice, so they should
-/// share a sample rate, but services don't promise that, so any that differs
-/// is resampled to the first one's rate.
-pub fn join(pieces: Vec<Pcm>) -> Option<Pcm> {
-    let rate = pieces.first()?.rate;
-    let mut samples = Vec::with_capacity(pieces.iter().map(|p| p.samples.len()).sum());
-    for piece in pieces {
-        if piece.rate == rate {
-            samples.extend(piece.samples);
-        } else {
-            samples.extend(resample(&piece, rate));
-        }
-    }
-    Some(Pcm { samples, rate })
-}
-
 /// Linear interpolation, which is plenty for speech.
 fn resample(pcm: &Pcm, rate: u32) -> Vec<f32> {
     let count = (pcm.samples.len() as u64 * u64::from(rate) / u64::from(pcm.rate.max(1))) as usize;
@@ -60,48 +44,95 @@ fn resample(pcm: &Pcm, rate: u32) -> Vec<f32> {
         .collect()
 }
 
-/// Encodes speech as a 128 kbit/s mono MP3.
-pub fn encode_mp3(pcm: &Pcm) -> anyhow::Result<Vec<u8>> {
-    use mp3lame_encoder::{Bitrate, Builder, FlushNoGap, MonoPcm, Quality};
-    let lame_err = |e: &dyn std::fmt::Display| anyhow::anyhow!("MP3 encoder error: {e}");
-    let mut builder = Builder::new().context("could not start the MP3 encoder")?;
-    builder.set_num_channels(1).map_err(|e| lame_err(&e))?;
-    builder.set_sample_rate(pcm.rate).map_err(|e| lame_err(&e))?;
-    builder.set_brate(Bitrate::Kbps128).map_err(|e| lame_err(&e))?;
-    builder.set_quality(Quality::Good).map_err(|e| lame_err(&e))?;
-    let mut encoder = builder.build().map_err(|e| lame_err(&e))?;
-
-    let samples: Vec<i16> = pcm.samples.iter().map(|s| (s.clamp(-1.0, 1.0) * f32::from(i16::MAX)) as i16).collect();
-    let mut out = Vec::new();
-    for block in samples.chunks(1152 * 64) {
-        out.reserve(mp3lame_encoder::max_required_buffer_size(block.len()));
-        encoder.encode_to_vec(MonoPcm(block), &mut out).map_err(|e| lame_err(&e))?;
-    }
-    out.reserve(7200);
-    encoder.flush_to_vec::<FlushNoGap>(&mut out).map_err(|e| lame_err(&e))?;
-    // LAME starts the audio with an empty frame, filled in here now the length
-    // is known, so that players show the right duration.
-    let mut info = Vec::with_capacity(encoder.lame_tag_size());
-    if encoder.lame_tag_encode_to_vec(&mut info).is_some() && info.len() <= out.len() {
-        out[..info.len()].copy_from_slice(&info);
-    }
-    Ok(out)
+fn lame_err(e: &dyn std::fmt::Display) -> anyhow::Error {
+    anyhow::anyhow!("MP3 encoder error: {e}")
 }
 
-/// Writes an MP3 file all at once: into a temporary file beside it, then moved
-/// into place, so a failure can't leave half a file or spoil an existing one.
-pub fn save_mp3(pcm: &Pcm, path: &Path) -> anyhow::Result<()> {
-    let bytes = encode_mp3(pcm)?;
+/// Encodes speech as a 128 kbit/s mono MP3 a piece at a time, so only the
+/// compressed sound is kept, not the whole recording. All the pieces come from
+/// one voice, so they should share a sample rate, but services don't promise
+/// that, so any that differs is resampled to the first one's rate.
+pub struct Mp3Encoder {
+    encoder: mp3lame_encoder::Encoder,
+    rate: u32,
+    out: Vec<u8>,
+}
+
+impl Mp3Encoder {
+    pub fn new(rate: u32) -> anyhow::Result<Self> {
+        use mp3lame_encoder::{Bitrate, Builder, Quality};
+        let mut builder = Builder::new().context("could not start the MP3 encoder")?;
+        builder.set_num_channels(1).map_err(|e| lame_err(&e))?;
+        builder.set_sample_rate(rate).map_err(|e| lame_err(&e))?;
+        builder.set_brate(Bitrate::Kbps128).map_err(|e| lame_err(&e))?;
+        builder.set_quality(Quality::Good).map_err(|e| lame_err(&e))?;
+        let encoder = builder.build().map_err(|e| lame_err(&e))?;
+        Ok(Self { encoder, rate, out: Vec::new() })
+    }
+
+    pub fn push(&mut self, pcm: &Pcm) -> anyhow::Result<()> {
+        let resampled;
+        let samples = if pcm.rate == self.rate {
+            &pcm.samples
+        } else {
+            resampled = resample(pcm, self.rate);
+            &resampled
+        };
+        let samples: Vec<i16> = samples.iter().map(|s| (s.clamp(-1.0, 1.0) * f32::from(i16::MAX)) as i16).collect();
+        for block in samples.chunks(1152 * 64) {
+            self.out.reserve(mp3lame_encoder::max_required_buffer_size(block.len()));
+            self.encoder.encode_to_vec(mp3lame_encoder::MonoPcm(block), &mut self.out).map_err(|e| lame_err(&e))?;
+        }
+        Ok(())
+    }
+
+    pub fn finish(mut self) -> anyhow::Result<Vec<u8>> {
+        self.out.reserve(7200);
+        self.encoder.flush_to_vec::<mp3lame_encoder::FlushNoGap>(&mut self.out).map_err(|e| lame_err(&e))?;
+        // LAME starts the audio with an empty frame, filled in here now the
+        // length is known, so that players show the right duration.
+        let mut info = Vec::with_capacity(self.encoder.lame_tag_size());
+        if self.encoder.lame_tag_encode_to_vec(&mut info).is_some() && info.len() <= self.out.len() {
+            self.out[..info.len()].copy_from_slice(&info);
+        }
+        Ok(self.out)
+    }
+}
+
+/// Encodes speech as a 128 kbit/s mono MP3.
+#[cfg(test)]
+pub fn encode_mp3(pcm: &Pcm) -> anyhow::Result<Vec<u8>> {
+    let mut encoder = Mp3Encoder::new(pcm.rate)?;
+    encoder.push(pcm)?;
+    encoder.finish()
+}
+
+/// Writes MP3 bytes to a temporary file beside `path`, ready to be moved into
+/// place with [`persist`]. Dropped instead, the temporary file is deleted.
+pub fn stage(bytes: &[u8], path: &Path) -> anyhow::Result<tempfile::NamedTempFile> {
     let dir = path.parent().filter(|d| !d.as_os_str().is_empty()).unwrap_or(Path::new("."));
     let mut file = tempfile::Builder::new()
         .prefix(".commonspeech-")
         .suffix(".tmp")
         .tempfile_in(dir)
         .with_context(|| format!("could not write to {}", dir.display()))?;
-    file.write_all(&bytes).context("could not write the MP3 file")?;
+    file.write_all(bytes).context("could not write the MP3 file")?;
     file.flush().context("could not write the MP3 file")?;
+    Ok(file)
+}
+
+/// Moves a file made by [`stage`] into place, replacing any file at `path`.
+pub fn persist(file: tempfile::NamedTempFile, path: &Path) -> anyhow::Result<()> {
     file.persist(path).map_err(|e| e.error).context("could not save the MP3 file")?;
     Ok(())
+}
+
+/// Writes an MP3 file all at once: into a temporary file beside it, then moved
+/// into place, so a failure can't leave half a file or spoil an existing one.
+/// The app saves speech a piece at a time instead; tests make files with this.
+#[cfg(test)]
+pub fn save_mp3(pcm: &Pcm, path: &Path) -> anyhow::Result<()> {
+    persist(stage(&encode_mp3(pcm)?, path)?, path)
 }
 
 /// Plays speech through the default output device.
@@ -178,11 +209,25 @@ mod tests {
     }
 
     #[test]
-    fn join_resamples_to_the_first_rate() {
-        let joined = join(vec![tone(22050, 1.0), tone(44100, 1.0)]).unwrap();
-        assert_eq!(joined.rate, 22050);
-        assert!(joined.samples.len().abs_diff(44100) < 4);
-        assert_eq!(join(Vec::new()), None);
+    fn encoding_in_pieces_resamples_to_the_first_rate() {
+        let mut encoder = Mp3Encoder::new(22050).unwrap();
+        encoder.push(&tone(22050, 1.0)).unwrap();
+        encoder.push(&tone(44100, 1.0)).unwrap();
+        let decoded = decode(encoder.finish().unwrap()).unwrap();
+        assert_eq!(decoded.rate, 22050);
+        let difference = decoded.samples.len().abs_diff(44100);
+        assert!(difference < 22050 / 4, "two seconds became {} samples", decoded.samples.len());
+    }
+
+    #[test]
+    fn a_staged_file_is_only_saved_when_persisted() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("out.mp3");
+        drop(stage(b"abc", &path).unwrap());
+        assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 0, "dropping leaves nothing");
+        persist(stage(b"abc", &path).unwrap(), &path).unwrap();
+        assert_eq!(std::fs::read(&path).unwrap(), b"abc");
+        assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 1);
     }
 
     #[test]

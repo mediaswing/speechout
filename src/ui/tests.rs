@@ -1395,7 +1395,7 @@ fn a_new_version_is_announced_and_linked_to() {
     let links = |h: &Window| h.root().children_recursive().filter(|n| n.accesskit_node().role() == Role::Link).count();
     let before = links(&h);
     let newer = crate::update::Version::parse("999.0.0").unwrap();
-    app_mut(&mut h).update_checked_for_test(Ok(Some(newer)), false);
+    app_mut(&mut h).update_checked_for_test(Ok(Some(newer)), true);
     h.run_steps(2);
     assert!(status(&h).contains("Version 999.0.0"), "{}", status(&h));
     assert_eq!(status_live(&h), Live::Polite, "news, not an error");
@@ -1426,6 +1426,46 @@ fn startup_checks_stay_quiet_unless_there_is_news() {
     app_mut(&mut h).update_checked_for_test(Ok(Some(newer)), false);
     h.run_steps(2);
     assert_eq!(status(&h), "Your settings could not be read.");
+}
+
+/// Messages are handled during a frame, as they are when the app runs, so the
+/// web browser can be asked to open a page.
+fn update_found_at_startup(h: &mut Window) -> Option<String> {
+    let (tx, rx) = channel();
+    let newer = crate::update::Version::parse("999.0.0").unwrap();
+    tx.send(Msg::Update(Ok(Some(newer)), false)).unwrap();
+    app_mut(h).rx = rx;
+    h.step();
+    let opened = h.output().platform_output.commands.iter().find_map(|c| match c {
+        egui::OutputCommand::OpenUrl(open) => Some(open.url.clone()),
+        _ => None,
+    });
+    h.run_steps(2);
+    opened
+}
+
+#[test]
+fn a_new_version_found_at_startup_offers_the_download_page() {
+    let (mut h, script) = window();
+    *script.confirm.borrow_mut() = true;
+    assert_eq!(update_found_at_startup(&mut h).as_deref(), Some(crate::update::RELEASES_URL));
+    assert_eq!(script.asked.borrow().as_slice(), ["Update available"]);
+    assert_eq!(status(&h), "Opening the download page for version 999.0.0 in your web browser.");
+
+    let (mut h, script) = window();
+    assert_eq!(update_found_at_startup(&mut h), None, "no opens nothing");
+    assert_eq!(script.asked.borrow().as_slice(), ["Update available"]);
+    assert!(status(&h).contains("Settings tab has a link"), "the news is still in the status bar: {}", status(&h));
+}
+
+#[test]
+fn checking_by_hand_asks_nothing() {
+    let (mut h, script) = window();
+    let newer = crate::update::Version::parse("999.0.0").unwrap();
+    app_mut(&mut h).update_checked_for_test(Ok(Some(newer)), true);
+    h.run_steps(2);
+    assert!(script.asked.borrow().is_empty(), "{:?}", script.asked.borrow());
+    assert!(status(&h).contains("Version 999.0.0"), "{}", status(&h));
 }
 
 #[test]
@@ -1464,4 +1504,37 @@ fn long_mp3s_can_be_stitched_from_the_keyboard() {
     assert!(value.contains("one file"), "a screen reader hears the choice: {value}");
     press(&mut h, Key::Home);
     assert!(!saved_settings(&h).stitch_parts);
+}
+
+#[test]
+fn saving_in_parts_asks_before_replacing_part_files() {
+    let dir = tempfile::tempdir().unwrap();
+    let out = dir.path().join("long.mp3");
+    let part = dir.path().join("long (part 2 of 2).mp3");
+    std::fs::write(&part, b"old").unwrap();
+    let (mut h, script) = window();
+    choose_free_text(&mut h);
+    app_mut(&mut h).free_text = "A sentence of some length. ".repeat(200);
+    let started = Instant::now();
+    while app_mut(&mut h).speech_job().is_err() {
+        assert!(started.elapsed() < Duration::from_secs(20), "the system voices never appeared");
+        h.run_steps(2);
+    }
+
+    script.files.borrow_mut().push_back(out.clone());
+    command(&mut h, Key::S);
+    assert_eq!(script.asked.borrow().last().unwrap(), "Replace files?");
+    assert_eq!(status(&h), "Nothing was saved, so the existing files are as they were.");
+    assert!(app(&h).job.is_none());
+    assert_eq!(std::fs::read(&part).unwrap(), b"old");
+
+    // Stitched, only the chosen file is written, which the save dialog asked about.
+    app_mut(&mut h).settings.stitch_parts = true;
+    script.files.borrow_mut().push_back(out);
+    command(&mut h, Key::S);
+    assert_eq!(script.asked.borrow().last().unwrap(), "Save the speech as an MP3 file: speech.mp3");
+    assert!(status(&h).starts_with("Saving"), "{}", status(&h));
+    // Making the speech can take a minute on a slow computer, so this doesn't
+    // wait; the worker's own tests check that stopping writes nothing.
+    app(&h).job.as_ref().unwrap().1.request_stop();
 }

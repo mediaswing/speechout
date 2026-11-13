@@ -103,6 +103,11 @@ fn wxs(exe: &Path, dlls: &[PathBuf], licence: &Path, licence_rtf: &Path) -> Stri
     //
     // The finish dialog's box opens the app as the person installing it, not
     // as the administrator the installation runs as, and not on uninstalling.
+    //
+    // The folder chosen in the dialogs is kept in the registry and found again
+    // by the next version's installer, which would otherwise suggest Program
+    // Files and move the app there. The search runs before the old version is
+    // removed, so it still finds the value.
     format!(
         r#"<?xml version="1.0" encoding="utf-8"?>
 <Wix xmlns="http://wixtoolset.org/schemas/v4/wxs" xmlns:ui="http://wixtoolset.org/schemas/v4/wxs/ui">
@@ -111,6 +116,9 @@ fn wxs(exe: &Path, dlls: &[PathBuf], licence: &Path, licence_rtf: &Path) -> Stri
     <MajorUpgrade DowngradeErrorMessage="A newer version of {APP_NAME} is already installed." />
     <MediaTemplate EmbedCab="yes" />
     <Property Id="ARPURLINFOABOUT" Value="https://github.com/mediaswing/speechout" />
+    <Property Id="INSTALLFOLDER">
+      <RegistrySearch Root="HKLM" Key="Software\{MANUFACTURER}\{APP_NAME}" Name="InstallFolder" Type="raw" />
+    </Property>
     <UI>
       <ui:WixUI Id="WixUI_InstallDir" InstallDirectory="INSTALLFOLDER" />
       <Publish Dialog="ExitDialog" Control="Finish" Event="DoAction" Value="LaunchApplication"
@@ -129,6 +137,10 @@ fn wxs(exe: &Path, dlls: &[PathBuf], licence: &Path, licence_rtf: &Path) -> Stri
         </Component>
         <Component>
           <File Id="Licences" Source="{licence}" Name="LICENSE.txt" />
+        </Component>
+        <Component Id="RememberInstallFolder">
+          <RegistryValue Root="HKLM" Key="Software\{MANUFACTURER}\{APP_NAME}" Name="InstallFolder"
+                         Type="string" Value="[INSTALLFOLDER]" KeyPath="yes" />
         </Component>
 {dll_components}      </Directory>
     </StandardDirectory>
@@ -220,6 +232,10 @@ mod tests {
         assert!(source.contains(r#"<WixVariable Id="WixUILicenseRtf" Value="C:\w\LICENSE.rtf" />"#));
         assert!(source.contains(r#"Value="Open Common Speech Output""#));
         assert!(source.contains("NOT Installed"), "uninstalling doesn't open the app");
+        // The folder is written and searched for under the same name.
+        let remembered = r#"Root="HKLM" Key="Software\mediaswing\Common Speech Output" Name="InstallFolder""#;
+        assert_eq!(source.matches(remembered).count(), 2, "{source}");
+        assert!(source.contains(r#"Value="[INSTALLFOLDER]""#));
     }
 
     #[test]

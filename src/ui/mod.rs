@@ -172,6 +172,8 @@ pub struct App {
     /// A newer version that GitHub has, once a check has found one.
     newer_version: Option<crate::update::Version>,
     checking_for_updates: bool,
+    /// The download page should open in the web browser on this frame.
+    open_downloads: bool,
 
     // Wordlist
     wordlists: Vec<Installed>,
@@ -247,6 +249,7 @@ impl App {
             wordlists,
             wordlist_to_remove: 0,
             newer_version: None,
+            open_downloads: false,
             checking_for_updates: false,
         };
         if !problem.is_empty() {
@@ -406,6 +409,9 @@ impl App {
     pub fn show(&mut self, ui: &mut Ui) {
         let ctx = ui.ctx().clone();
         self.handle_messages();
+        if std::mem::take(&mut self.open_downloads) {
+            ctx.open_url(egui::OpenUrl::new_tab(crate::update::RELEASES_URL));
+        }
         self.handle_shortcuts(&ctx);
         self.open_dropped_file(&ctx);
         egui::Panel::bottom("status_bar").show(ui, |ui| self.status_bar(ui));

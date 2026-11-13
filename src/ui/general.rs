@@ -216,6 +216,26 @@ impl App {
         if !path.extension().is_some_and(|e| e.eq_ignore_ascii_case("mp3")) {
             path.as_mut_os_string().push(".mp3");
         }
+        // Long text is saved as numbered parts, which the save dialog didn't
+        // ask about, so any already there are asked about here.
+        let outputs = match job.output_paths(&path, self.settings.stitch_parts) {
+            Ok(outputs) => outputs,
+            Err(e) => return self.set_error(worker::sentence(&e)),
+        };
+        let existing: Vec<String> = outputs.iter().filter(|p| **p != path && p.exists()).map(|p| display_name(p)).collect();
+        if !existing.is_empty() {
+            let question = format!(
+                "The text is long, so it will be saved in {} parts. {} already exist{}: {}.\n\nReplace {}?",
+                outputs.len(),
+                if existing.len() == 1 { "This file" } else { "These files" },
+                if existing.len() == 1 { "s" } else { "" },
+                existing.join(", "),
+                if existing.len() == 1 { "it" } else { "them" },
+            );
+            if !self.dialogs.confirm("Replace files?", &question) {
+                return self.set_info("Nothing was saved, so the existing files are as they were.");
+            }
+        }
         let control = Arc::new(Control::default());
         self.job = Some((JobKind::Saving, control.clone()));
         self.progress = 0.0;

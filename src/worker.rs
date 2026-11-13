@@ -162,18 +162,27 @@ pub struct SpeechJob {
 }
 
 impl SpeechJob {
+    /// The text as it should be spoken, with the wordlists applied.
+    fn spoken(&self) -> anyhow::Result<String> {
+        Ok(Substitutions::new(&self.wordlists)?.apply(&self.text))
+    }
+
     /// The text as it should be spoken, in pieces the service will accept.
     fn pieces(&self) -> anyhow::Result<Vec<String>> {
-        let spoken = Substitutions::new(&self.wordlists)?.apply(&self.text);
-        Ok(speech::split_text(&spoken, self.provider))
+        Ok(speech::split_text(&self.spoken()?, self.provider))
     }
 
     /// The text as it should be spoken, in parts of at most
     /// [`speech::PART_CHARS`] characters, one for each MP3 file, and each part
     /// in pieces the service will accept.
     fn parts(&self) -> anyhow::Result<Vec<Vec<String>>> {
-        let spoken = Substitutions::new(&self.wordlists)?.apply(&self.text);
-        Ok(speech::split_into_parts(&spoken).iter().map(|part| speech::split_text(part, self.provider)).collect())
+        Ok(speech::split_into_parts(&self.spoken()?).iter().map(|part| speech::split_text(part, self.provider)).collect())
+    }
+
+    /// The files that saving as `path` will write: `path` itself, or a
+    /// numbered file for each part when the text is long and not stitched.
+    pub fn output_paths(&self, path: &Path, stitch: bool) -> anyhow::Result<Vec<PathBuf>> {
+        Ok(output_paths(path, self.parts()?.len(), stitch))
     }
 
     fn sound_of(&self, piece: &str) -> anyhow::Result<audio::Pcm> {
@@ -297,7 +306,12 @@ fn run_speech(rep: &Reporter, control: &Control, job: &SpeechJob) -> anyhow::Res
 pub fn save_mp3(rep: &Reporter, control: Arc<Control>, job: SpeechJob, path: PathBuf, stitch: bool) {
     rep.spawn_or(
         move |rep| match run_save(rep, &control, &job, &path, stitch) {
-            Ok(Some(saved)) => rep.send(Msg::Done(saved_message(&saved))),
+            Ok(Some(saved)) => {
+                // Saved in parts, the chosen file isn't written, so one already
+                // there still has whatever it had before.
+                let kept = (saved != [path.clone()] && path.exists()).then_some(path.as_path());
+                rep.send(Msg::Done(saved_message(&saved, kept)));
+            }
             Ok(None) => rep.send(Msg::Done("Stopped saving. No file was written.".to_owned())),
             Err(e) => {
                 log::warn!("Saving the MP3 failed: {e:#}");
@@ -308,10 +322,6 @@ pub fn save_mp3(rep: &Reporter, control: Arc<Control>, job: SpeechJob, path: Pat
     );
 }
 
-/// Returns the files written, or `None` if stopped. Text longer than
-/// [`speech::PART_CHARS`] characters is saved as several numbered files,
-/// unless `stitch` joins the parts back into one.
-/// Nothing is written until all the speech is made, so stopping writes nothing.
 fn run_save(
     rep: &Reporter,
     control: &Control,
@@ -320,50 +330,88 @@ fn run_save(
     stitch: bool,
 ) -> anyhow::Result<Option<Vec<PathBuf>>> {
     let parts = job.parts()?;
+    log::debug!("Saving with {} in {} parts", job.provider.label(), parts.len());
+    save_parts(rep, control, &parts, path, stitch, |piece| job.sound_of(piece))
+}
+
+/// Makes the sound of each piece with `sound_of` and saves it. Returns the
+/// files written, or `None` if stopped. Each part is saved as its own numbered
+/// file, unless there is only one or `stitch` puts them all in one file.
+///
+/// Each piece is encoded as soon as it is made, so only compressed sound is
+/// kept, however long the text. The files go to temporary files first, and are
+/// only moved into place once all of them are ready, so stopping or a failure
+/// leaves nothing behind.
+fn save_parts(
+    rep: &Reporter,
+    control: &Control,
+    parts: &[Vec<String>],
+    path: &Path,
+    stitch: bool,
+    mut sound_of: impl FnMut(&str) -> anyhow::Result<audio::Pcm>,
+) -> anyhow::Result<Option<Vec<PathBuf>>> {
     let total: usize = parts.iter().map(Vec::len).sum();
-    log::debug!("Saving with {} in {} parts, {total} pieces", job.provider.label(), parts.len());
+    anyhow::ensure!(total > 0, "there was nothing to save");
+    let outputs = output_paths(path, parts.len(), stitch);
+    let mut staged = Vec::with_capacity(outputs.len());
+    let mut encoder: Option<audio::Mp3Encoder> = None;
     let mut done = 0;
-    let mut sounds = Vec::with_capacity(parts.len());
-    for part in &parts {
-        let mut part_sounds = Vec::with_capacity(part.len());
+    for (i, part) in parts.iter().enumerate() {
         for piece in part {
             if control.stopped() {
                 return Ok(None);
             }
-            part_sounds.push(job.sound_of(piece)?);
+            let pcm = sound_of(piece)?;
+            let encoder = match &mut encoder {
+                Some(encoder) => encoder,
+                None => encoder.insert(audio::Mp3Encoder::new(pcm.rate)?),
+            };
+            encoder.push(&pcm)?;
             done += 1;
             rep.send(Msg::Progress(done as f32 / total as f32));
         }
-        sounds.push(audio::join(part_sounds).context("there was nothing to save")?);
+        let file_ends = !stitch || i + 1 == parts.len();
+        if file_ends && let Some(finished) = encoder.take() {
+            let out = &outputs[staged.len()];
+            staged.push((audio::stage(&finished.finish()?, out)?, out.clone()));
+        }
     }
-    write_parts(sounds, path, stitch).map(Some)
-}
-
-/// Writes the sound of each part: one file at `path` when there is only one
-/// part or `stitch` joins them, otherwise a numbered file for each part.
-fn write_parts(mut sounds: Vec<audio::Pcm>, path: &Path, stitch: bool) -> anyhow::Result<Vec<PathBuf>> {
-    anyhow::ensure!(!sounds.is_empty(), "there was nothing to save");
-    if stitch && sounds.len() > 1 {
-        sounds = vec![audio::join(sounds).context("there was nothing to save")?];
-    }
-    let count = sounds.len();
-    let mut saved = Vec::with_capacity(count);
-    for (i, pcm) in sounds.iter().enumerate() {
-        let out = if count == 1 { path.to_path_buf() } else { part_path(path, i + 1, count) };
-        audio::save_mp3(pcm, &out)?;
+    anyhow::ensure!(staged.len() == outputs.len(), "there was nothing to save");
+    let mut saved = Vec::with_capacity(staged.len());
+    for (file, out) in staged {
+        if let Err(e) = audio::persist(file, &out) {
+            // Not a set with a part missing. Any files not yet moved into place
+            // are deleted as they are dropped.
+            for written in &saved {
+                let _ = std::fs::remove_file(written);
+            }
+            return Err(e);
+        }
         saved.push(out);
     }
-    Ok(saved)
+    Ok(Some(saved))
 }
 
-/// `speech.mp3` becomes `speech (part 2 of 3).mp3`.
+fn output_paths(path: &Path, parts: usize, stitch: bool) -> Vec<PathBuf> {
+    if stitch || parts <= 1 {
+        vec![path.to_path_buf()]
+    } else {
+        (1..=parts).map(|number| part_path(path, number, parts)).collect()
+    }
+}
+
+/// `speech.mp3` becomes `speech (part 2 of 3).mp3`, keeping the extension as
+/// it was typed.
 fn part_path(path: &Path, number: usize, count: usize) -> PathBuf {
     let stem = path.file_stem().map_or_else(|| "speech".into(), |s| s.to_string_lossy().into_owned());
-    path.with_file_name(format!("{stem} (part {number} of {count}).mp3"))
+    let extension = path.extension().map_or_else(|| "mp3".into(), |e| e.to_string_lossy().into_owned());
+    path.with_file_name(format!("{stem} (part {number} of {count}).{extension}"))
 }
 
-fn saved_message(saved: &[PathBuf]) -> String {
-    match saved {
+/// What to say once saved. `kept` is the file that was chosen, if it wasn't
+/// written because the text was saved in parts and a file of that name exists.
+fn saved_message(saved: &[PathBuf], kept: Option<&Path>) -> String {
+    let message = match saved {
         [one] => format!("Saved {}.", display_name(one)),
         [first, .., last] => format!(
             "The text was over {} characters, so it was saved in {} parts, {} to {}.",
@@ -373,6 +421,10 @@ fn saved_message(saved: &[PathBuf]) -> String {
             display_name(last)
         ),
         [] => "Nothing was saved.".to_owned(),
+    };
+    match kept {
+        Some(kept) => format!("{message} The existing {} was left as it was.", display_name(kept)),
+        None => message,
     }
 }
 
@@ -583,10 +635,15 @@ mod tests {
         assert_eq!(part_path(&path, 2, 3), Path::new("dir").join("my speech (part 2 of 3).mp3"));
         let saved = [part_path(&path, 1, 2), part_path(&path, 2, 2)];
         assert_eq!(
-            saved_message(&saved),
+            saved_message(&saved, None),
             "The text was over 4500 characters, so it was saved in 2 parts, my speech (part 1 of 2).mp3 to my speech (part 2 of 2).mp3."
         );
-        assert_eq!(saved_message(&[path]), "Saved my speech.mp3.");
+        assert!(saved_message(&saved, Some(&path)).ends_with(" The existing my speech.mp3 was left as it was."));
+        assert_eq!(saved_message(std::slice::from_ref(&path), None), "Saved my speech.mp3.");
+        assert_eq!(part_path(Path::new("Talk.MP3"), 1, 2), Path::new("Talk (part 1 of 2).MP3"), "as it was typed");
+        assert_eq!(output_paths(&path, 1, false), std::slice::from_ref(&path));
+        assert_eq!(output_paths(&path, 3, true), std::slice::from_ref(&path));
+        assert_eq!(output_paths(&path, 2, false), saved);
     }
 
     /// Uses the real system voice. CI installs eSpeak NG for this on Ubuntu.
@@ -611,35 +668,59 @@ mod tests {
     }
 
     /// Fixed tones rather than a voice, because a voice can take a different
-    /// time to say the same words each time.
+    /// time to say the same words each time. Each piece's text is how many
+    /// seconds of sound it makes.
+    fn save_tones(parts: &[&[&str]], path: &Path, stitch: bool) -> anyhow::Result<Option<Vec<PathBuf>>> {
+        let parts: Vec<Vec<String>> = parts.iter().map(|p| p.iter().map(|s| (*s).to_owned()).collect()).collect();
+        let (tx, _rx) = std::sync::mpsc::channel();
+        let rep = Reporter::new(tx, egui::Context::default());
+        save_parts(&rep, &Control::default(), &parts, path, stitch, |piece| {
+            let seconds: usize = piece.parse().map_err(|_| anyhow::anyhow!("the voice failed"))?;
+            Ok(audio::Pcm { samples: (0..22050 * seconds).map(|i| (i as f32 * 0.05).sin() * 0.5).collect(), rate: 22050 })
+        })
+    }
+
+    fn seconds(path: &Path) -> f64 {
+        let pcm = audio::decode(std::fs::read(path).unwrap()).unwrap();
+        pcm.samples.len() as f64 / f64::from(pcm.rate)
+    }
+
+    fn files_in(dir: &Path) -> Vec<String> {
+        let mut names: Vec<String> =
+            std::fs::read_dir(dir).unwrap().map(|e| e.unwrap().file_name().to_string_lossy().into_owned()).collect();
+        names.sort();
+        names
+    }
+
     #[test]
     fn parts_are_saved_separately_or_stitched() {
-        let tone = |seconds: usize| audio::Pcm {
-            samples: (0..22050 * seconds).map(|i| (i as f32 * 0.05).sin() * 0.5).collect(),
-            rate: 22050,
-        };
-        let seconds = |path: &Path| {
-            let pcm = audio::decode(std::fs::read(path).unwrap()).unwrap();
-            pcm.samples.len() as f64 / f64::from(pcm.rate)
-        };
         let dir = tempfile::tempdir().unwrap();
-
         let out = dir.path().join("apart.mp3");
-        let saved = write_parts(vec![tone(2), tone(3)], &out, false).unwrap();
+        let saved = save_tones(&[&["1", "1"], &["3"]], &out, false).unwrap().unwrap();
         assert_eq!(saved, [part_path(&out, 1, 2), part_path(&out, 2, 2)]);
         assert!(!out.exists());
         assert!((seconds(&saved[0]) - 2.0).abs() < 0.1, "{}", seconds(&saved[0]));
         assert!((seconds(&saved[1]) - 3.0).abs() < 0.1, "{}", seconds(&saved[1]));
 
         let joined = dir.path().join("joined.mp3");
-        let saved = write_parts(vec![tone(2), tone(3)], &joined, true).unwrap();
+        let saved = save_tones(&[&["1", "1"], &["3"]], &joined, true).unwrap().unwrap();
         assert_eq!(saved, std::slice::from_ref(&joined), "stitched into the one file chosen");
-        assert!(!part_path(&joined, 1, 2).exists());
         assert!((seconds(&joined) - 5.0).abs() < 0.1, "all the parts are in it: {}", seconds(&joined));
 
         let single = dir.path().join("single.mp3");
-        assert_eq!(write_parts(vec![tone(1)], &single, false).unwrap(), std::slice::from_ref(&single));
-        assert!(write_parts(Vec::new(), &single, true).is_err());
+        assert_eq!(save_tones(&[&["1"]], &single, false).unwrap().unwrap(), std::slice::from_ref(&single));
+        assert!(save_tones(&[], &single, true).is_err());
+        assert_eq!(files_in(dir.path()).len(), 4, "no temporary files are left: {:?}", files_in(dir.path()));
+    }
+
+    #[test]
+    fn a_failure_leaves_no_parts_behind() {
+        let dir = tempfile::tempdir().unwrap();
+        let out = dir.path().join("out.mp3");
+        std::fs::write(part_path(&out, 1, 2), b"old").unwrap();
+        assert!(save_tones(&[&["1"], &["broken"]], &out, false).is_err());
+        assert_eq!(files_in(dir.path()), ["out (part 1 of 2).mp3"], "nothing new, not even temporary files");
+        assert_eq!(std::fs::read(part_path(&out, 1, 2)).unwrap(), b"old", "the earlier file wasn't touched");
     }
 
     #[test]

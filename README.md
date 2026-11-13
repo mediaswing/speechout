@@ -62,7 +62,8 @@ pane. Choosing a file, with Ctrl+O or by dropping one on the window, goes back t
 **Save as MP3**. Cloud services appear once you've saved a key for them.
 
 Text over 4,500 characters is saved as several MP3 files, named like
-`speech (part 1 of 3).mp3`. To get one file instead, choose **Stitch the parts
+`speech (part 1 of 3).mp3`. If any of those files already exist, the app asks
+before replacing them. To get one file instead, choose **Stitch the parts
 together into one file** under **Saving MP3 Files** on the Settings tab.
 
 A CSV file is read as sentences rather than cell by cell. The reading starts with
@@ -93,8 +94,10 @@ gives no answer, the app tries your other models that understand images.
 
 - **Transcribing Audio**: where whisper.cpp is, if it isn't found by itself.
 - **Updates**: whether to check for a new version when the app starts, and a
-  button to check now. When there is one, the status bar says so and this section
-  has a link to download it. The app never downloads or installs anything itself.
+  button to check now. Checking is on unless you turn it off. When there is a new
+  version, the status bar says so and this section has a link to download it; one
+  found when the app starts is also shown in a dialog that offers to open the
+  download page. The app never downloads or installs anything itself.
 
 ### Wordlist
 

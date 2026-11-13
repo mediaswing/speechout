@@ -1,7 +1,8 @@
 //! Checking for a new version: when the app starts, unless that is turned off,
 //! and whenever the button on the Settings tab is pressed. A new version is
-//! announced in the status bar and linked to from the Settings tab. Nothing is
-//! downloaded or installed by the app itself.
+//! announced in the status bar and linked to from the Settings tab. One found
+//! when the app starts is also shown in a dialog, which offers to open the
+//! download page. Nothing is downloaded or installed by the app itself.
 
 use egui::Ui;
 
@@ -38,6 +39,20 @@ impl App {
         match result {
             Ok(Some(newer)) => {
                 self.newer_version = Some(newer);
+                // Checking by hand happens on the Settings tab, beside the link.
+                if !requested
+                    && self.dialogs.confirm(
+                        "Update available",
+                        &format!(
+                            "Version {newer} of {} is available. You have {current}.\n\nOpen the download page in \
+                             your web browser?",
+                            crate::APP_TITLE
+                        ),
+                    )
+                {
+                    self.open_downloads = true;
+                    return self.set_info(format!("Opening the download page for version {newer} in your web browser."));
+                }
                 // At startup, a problem already in the status bar matters more.
                 if requested || !self.status.error {
                     self.set_info(format!(

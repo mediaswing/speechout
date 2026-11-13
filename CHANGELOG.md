@@ -1,5 +1,25 @@
 # Changelog
 
+## [5.1.2] - 2026-11-13
+
+- **A new version found when the app starts is shown in a dialog**, which
+  offers to open the download page in your web browser. Checking the Settings
+  tab by hand still answers in the status bar, beside the download link.
+- **Saving long text in parts asks before replacing files.** If any of the
+  numbered part files already exist, the app asks once before replacing them.
+  When the text is saved in parts, an existing file with the name you chose is
+  left as it was, and the status bar now says so.
+- **A save that fails or is stopped leaves no files behind**, not even the
+  parts that were finished.
+- **Saving very long text uses much less memory.** The speech is turned into
+  MP3 as it is made, rather than kept until the end.
+- **Part files keep the extension as you typed it**, so `Talk.MP3` is saved
+  as `Talk (part 1 of 2).MP3`.
+- **The Windows installer remembers the folder you chose** and offers it again
+  when you install a newer version, instead of moving the app back to Program
+  Files. This starts with 5.1.2, so an upgrade from 5.1.1 still suggests Program
+  Files once.
+
 ## [5.1.1] - 2026-11-13
 
 - **The Windows installer shows its steps.** Opening the .msi now shows the
