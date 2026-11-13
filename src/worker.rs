@@ -602,18 +602,24 @@ mod tests {
         assert_eq!(saved, [part_path(&out, 1, 2), part_path(&out, 2, 2)]);
         assert!(saved.iter().all(|p| p.exists()));
         assert!(!out.exists());
-        let part_seconds: usize = saved.iter().map(|p| seconds(p)).sum();
+        let part_seconds: f64 = saved.iter().map(|p| seconds(p)).sum();
 
         let joined = dir.path().join("joined.mp3");
         let saved = run_save(&rep, &Control::default(), &job, &joined, true).unwrap().unwrap();
         assert_eq!(saved, std::slice::from_ref(&joined), "stitched into the one file chosen");
         assert!(!part_path(&joined, 1, 2).exists());
-        assert!(seconds(&joined).abs_diff(part_seconds) <= 1, "all the parts are in it");
+        // The speech is made again, so its length can differ a little.
+        let joined_seconds = seconds(&joined);
+        assert!(
+            (joined_seconds - part_seconds).abs() <= part_seconds * 0.1,
+            "all the parts are in it: {joined_seconds:.2}s stitched, {part_seconds:.2}s in parts"
+        );
     }
 
-    fn seconds(path: &Path) -> usize {
+    #[cfg(unix)]
+    fn seconds(path: &Path) -> f64 {
         let pcm = audio::decode(std::fs::read(path).unwrap()).unwrap();
-        pcm.samples.len() / pcm.rate as usize
+        pcm.samples.len() as f64 / f64::from(pcm.rate)
     }
 
     #[test]

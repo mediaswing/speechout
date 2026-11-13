@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased]
+## [5.1.0] - 2026-11-13
 
 - **Long text is saved in parts.** Text over 4,500 characters is saved as
   numbered MP3 files, such as `speech (part 1 of 3).mp3`. A new setting under
