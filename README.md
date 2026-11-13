@@ -34,7 +34,8 @@ Downloads are on the [releases page](https://github.com/mediaswing/speechout/rel
 | Ubuntu 22.04 or later | `speechout-<version>-ubuntu-amd64.deb` |
 
 The downloads aren't signed with a paid certificate, so your computer may warn
-you. On Windows, choose **More info**, then **Run anyway**. On a Mac the app has an
+you. On Windows, choose **More info**, then **Run anyway**, then follow the
+installer's steps; its last page has a box to open the app. On a Mac the app has an
 ad hoc signature: if macOS refuses the package, open **System Settings**, then
 **Privacy & Security**, and choose **Open Anyway**.
 

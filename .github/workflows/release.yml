@@ -172,6 +172,9 @@ jobs:
         run: |
           dotnet tool install --global wix --version 6.0.2
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          # The installer's dialogs, and the action that opens the app at the end.
+          & "$env:USERPROFILE\.dotnet\tools\wix.exe" extension add --global WixToolset.UI.wixext/6.0.2 WixToolset.Util.wixext/6.0.2
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           "$env:USERPROFILE\.dotnet\tools" >> $env:GITHUB_PATH
       - run: cargo test --locked --features bundled-heif
       - run: cargo build --release --locked --features bundled-heif

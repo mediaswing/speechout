@@ -1,5 +1,13 @@
 # Changelog
 
+## [5.1.1] - 2026-11-13
+
+- **The Windows installer shows its steps.** Opening the .msi now shows the
+  standard installer dialogs, which work with screen readers: a welcome, the
+  licence, where to install, and a last page that says installation finished,
+  with a box to open the app. Before, it showed only a progress bar and closed.
+  Installing with `msiexec /qn` is still silent.
+
 ## [5.1.0] - 2026-11-13
 
 - **Long text is saved in parts.** Text over 4,500 characters is saved as
