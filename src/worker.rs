@@ -336,6 +336,12 @@ fn run_save(
         }
         sounds.push(audio::join(part_sounds).context("there was nothing to save")?);
     }
+    write_parts(sounds, path, stitch).map(Some)
+}
+
+/// Writes the sound of each part: one file at `path` when there is only one
+/// part or `stitch` joins them, otherwise a numbered file for each part.
+fn write_parts(mut sounds: Vec<audio::Pcm>, path: &Path, stitch: bool) -> anyhow::Result<Vec<PathBuf>> {
     anyhow::ensure!(!sounds.is_empty(), "there was nothing to save");
     if stitch && sounds.len() > 1 {
         sounds = vec![audio::join(sounds).context("there was nothing to save")?];
@@ -347,7 +353,7 @@ fn run_save(
         audio::save_mp3(pcm, &out)?;
         saved.push(out);
     }
-    Ok(Some(saved))
+    Ok(saved)
 }
 
 /// `speech.mp3` becomes `speech (part 2 of 3).mp3`.
@@ -602,24 +608,38 @@ mod tests {
         assert_eq!(saved, [part_path(&out, 1, 2), part_path(&out, 2, 2)]);
         assert!(saved.iter().all(|p| p.exists()));
         assert!(!out.exists());
-        let part_seconds: f64 = saved.iter().map(|p| seconds(p)).sum();
-
-        let joined = dir.path().join("joined.mp3");
-        let saved = run_save(&rep, &Control::default(), &job, &joined, true).unwrap().unwrap();
-        assert_eq!(saved, std::slice::from_ref(&joined), "stitched into the one file chosen");
-        assert!(!part_path(&joined, 1, 2).exists());
-        // The speech is made again, so its length can differ a little.
-        let joined_seconds = seconds(&joined);
-        assert!(
-            (joined_seconds - part_seconds).abs() <= part_seconds * 0.1,
-            "all the parts are in it: {joined_seconds:.2}s stitched, {part_seconds:.2}s in parts"
-        );
     }
 
-    #[cfg(unix)]
-    fn seconds(path: &Path) -> f64 {
-        let pcm = audio::decode(std::fs::read(path).unwrap()).unwrap();
-        pcm.samples.len() as f64 / f64::from(pcm.rate)
+    /// Fixed tones rather than a voice, because a voice can take a different
+    /// time to say the same words each time.
+    #[test]
+    fn parts_are_saved_separately_or_stitched() {
+        let tone = |seconds: usize| audio::Pcm {
+            samples: (0..22050 * seconds).map(|i| (i as f32 * 0.05).sin() * 0.5).collect(),
+            rate: 22050,
+        };
+        let seconds = |path: &Path| {
+            let pcm = audio::decode(std::fs::read(path).unwrap()).unwrap();
+            pcm.samples.len() as f64 / f64::from(pcm.rate)
+        };
+        let dir = tempfile::tempdir().unwrap();
+
+        let out = dir.path().join("apart.mp3");
+        let saved = write_parts(vec![tone(2), tone(3)], &out, false).unwrap();
+        assert_eq!(saved, [part_path(&out, 1, 2), part_path(&out, 2, 2)]);
+        assert!(!out.exists());
+        assert!((seconds(&saved[0]) - 2.0).abs() < 0.1, "{}", seconds(&saved[0]));
+        assert!((seconds(&saved[1]) - 3.0).abs() < 0.1, "{}", seconds(&saved[1]));
+
+        let joined = dir.path().join("joined.mp3");
+        let saved = write_parts(vec![tone(2), tone(3)], &joined, true).unwrap();
+        assert_eq!(saved, std::slice::from_ref(&joined), "stitched into the one file chosen");
+        assert!(!part_path(&joined, 1, 2).exists());
+        assert!((seconds(&joined) - 5.0).abs() < 0.1, "all the parts are in it: {}", seconds(&joined));
+
+        let single = dir.path().join("single.mp3");
+        assert_eq!(write_parts(vec![tone(1)], &single, false).unwrap(), std::slice::from_ref(&single));
+        assert!(write_parts(Vec::new(), &single, true).is_err());
     }
 
     #[test]
