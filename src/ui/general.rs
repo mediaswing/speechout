@@ -220,7 +220,7 @@ impl App {
         self.job = Some((JobKind::Saving, control.clone()));
         self.progress = 0.0;
         self.set_info(format!("Saving {}.", display_name(&path)));
-        worker::save_mp3(&self.rep, control, job, path);
+        worker::save_mp3(&self.rep, control, job, path, self.settings.stitch_parts);
     }
 
     pub(super) fn toggle_pause(&mut self) {

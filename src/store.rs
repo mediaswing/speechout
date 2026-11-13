@@ -88,6 +88,9 @@ pub struct Settings {
     pub whisper_program: Option<PathBuf>,
     /// Ask GitHub for the latest version number when the app starts.
     pub check_updates: bool,
+    /// Save text over [`crate::speech::PART_CHARS`] characters as one MP3
+    /// file, rather than a file for each part.
+    pub stitch_parts: bool,
 }
 
 impl Default for Settings {
@@ -103,6 +106,7 @@ impl Default for Settings {
             appearance: Appearance::Standard,
             whisper_program: None,
             check_updates: true,
+            stitch_parts: false,
         }
     }
 }
@@ -224,6 +228,7 @@ impl Store {
         }
         s.whisper_program = self.get("whisper_program")?.filter(|v| !v.is_empty()).map(PathBuf::from);
         s.check_updates = self.get("check_updates")?.as_deref() != Some("0");
+        s.stitch_parts = self.get("stitch_parts")?.as_deref() == Some("1");
         Ok(s)
     }
 
@@ -247,6 +252,7 @@ impl Store {
         self.set("appearance", s.appearance.key())?;
         self.set("whisper_program", &s.whisper_program.as_deref().map(|d| d.display().to_string()).unwrap_or_default())?;
         self.set("check_updates", if s.check_updates { "1" } else { "0" })?;
+        self.set("stitch_parts", if s.stitch_parts { "1" } else { "0" })?;
         tx.commit()?;
         Ok(())
     }
@@ -350,6 +356,7 @@ mod tests {
             appearance: Appearance::HighContrast,
             whisper_program: Some(PathBuf::from("/opt/whisper/whisper-cli")),
             check_updates: false,
+            stitch_parts: true,
             ..Settings::default()
         };
         wanted.voices.insert(Provider::Deepgram.key().into(), "aura-2-thalia-en".into());

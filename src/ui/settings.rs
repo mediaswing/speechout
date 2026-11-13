@@ -9,7 +9,7 @@ use egui::{Key, Ui};
 use super::widgets::{dropdown, full_button, heading, password_field, path_field, text_field};
 use super::{App, Loadable, appearance, shortcuts};
 use crate::logging;
-use crate::speech::Provider;
+use crate::speech::{self, Provider};
 use crate::store::{AiKind, Appearance};
 use crate::vision;
 use crate::worker;
@@ -17,6 +17,8 @@ use crate::worker;
 const AUTOMATIC_MODEL: &str = "Choose a model automatically";
 const GPS_OFF: &str = "No, don't look up where photos were taken";
 const GPS_ON: &str = "Yes, send a photo's rounded location to OpenStreetMap to find the place name";
+const PARTS_SEPARATE: &str = "Save each part as its own file, numbered part 1, part 2 and so on";
+const PARTS_STITCHED: &str = "Stitch the parts together into one file";
 
 impl App {
     pub(super) fn save_api_key(&mut self) {
@@ -150,6 +152,17 @@ impl App {
         }
     }
 
+    fn saving_section(&mut self, ui: &mut Ui) {
+        heading(ui, "Saving MP3 Files", 3);
+        ui.label(format!("Text over {} characters is turned into speech in parts.", speech::PART_CHARS));
+        let options = [PARTS_SEPARATE.to_owned(), PARTS_STITCHED.to_owned()];
+        let mut index = usize::from(self.settings.stitch_parts);
+        if dropdown(ui, "stitch_parts", "When long text is saved as MP3", &options, &mut index) {
+            self.settings.stitch_parts = index == 1;
+            self.save_settings();
+        }
+    }
+
     fn images_section(&mut self, ui: &mut Ui) {
         heading(ui, "Describing Images", 3);
         let names: Vec<String> = AiKind::ALL.iter().map(|k| k.label().to_owned()).collect();
@@ -274,6 +287,8 @@ impl App {
         self.api_keys_section(ui);
         ui.add_space(8.0);
         self.appearance_section(ui);
+        ui.add_space(8.0);
+        self.saving_section(ui);
         ui.add_space(8.0);
         self.images_section(ui);
         self.log_section(ui);

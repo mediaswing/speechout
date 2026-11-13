@@ -168,6 +168,14 @@ impl SpeechJob {
         Ok(speech::split_text(&spoken, self.provider))
     }
 
+    /// The text as it should be spoken, in parts of at most
+    /// [`speech::PART_CHARS`] characters, one for each MP3 file, and each part
+    /// in pieces the service will accept.
+    fn parts(&self) -> anyhow::Result<Vec<Vec<String>>> {
+        let spoken = Substitutions::new(&self.wordlists)?.apply(&self.text);
+        Ok(speech::split_into_parts(&spoken).iter().map(|part| speech::split_text(part, self.provider)).collect())
+    }
+
     fn sound_of(&self, piece: &str) -> anyhow::Result<audio::Pcm> {
         let bytes = speech::synthesize(self.provider, &self.key, &self.voice, piece)?;
         audio::decode(bytes)
@@ -284,11 +292,13 @@ fn run_speech(rep: &Reporter, control: &Control, job: &SpeechJob) -> anyhow::Res
     Ok(!control.stopped())
 }
 
-pub fn save_mp3(rep: &Reporter, control: Arc<Control>, job: SpeechJob, path: PathBuf) {
+/// With `stitch`, text over [`speech::PART_CHARS`] characters is still saved
+/// as one file; otherwise it is saved as a file for each part.
+pub fn save_mp3(rep: &Reporter, control: Arc<Control>, job: SpeechJob, path: PathBuf, stitch: bool) {
     rep.spawn_or(
-        move |rep| match run_save(rep, &control, &job, &path) {
-            Ok(true) => rep.send(Msg::Done(format!("Saved {}.", display_name(&path)))),
-            Ok(false) => rep.send(Msg::Done("Stopped saving. No file was written.".to_owned())),
+        move |rep| match run_save(rep, &control, &job, &path, stitch) {
+            Ok(Some(saved)) => rep.send(Msg::Done(saved_message(&saved))),
+            Ok(None) => rep.send(Msg::Done("Stopped saving. No file was written.".to_owned())),
             Err(e) => {
                 log::warn!("Saving the MP3 failed: {e:#}");
                 rep.send(Msg::Failed(sentence(&e)));
@@ -298,19 +308,66 @@ pub fn save_mp3(rep: &Reporter, control: Arc<Control>, job: SpeechJob, path: Pat
     );
 }
 
-fn run_save(rep: &Reporter, control: &Control, job: &SpeechJob, path: &Path) -> anyhow::Result<bool> {
-    let pieces = job.pieces()?;
-    let mut sounds = Vec::with_capacity(pieces.len());
-    for (done, piece) in pieces.iter().enumerate() {
-        if control.stopped() {
-            return Ok(false);
+/// Returns the files written, or `None` if stopped. Text longer than
+/// [`speech::PART_CHARS`] characters is saved as several numbered files,
+/// unless `stitch` joins the parts back into one.
+/// Nothing is written until all the speech is made, so stopping writes nothing.
+fn run_save(
+    rep: &Reporter,
+    control: &Control,
+    job: &SpeechJob,
+    path: &Path,
+    stitch: bool,
+) -> anyhow::Result<Option<Vec<PathBuf>>> {
+    let parts = job.parts()?;
+    let total: usize = parts.iter().map(Vec::len).sum();
+    log::debug!("Saving with {} in {} parts, {total} pieces", job.provider.label(), parts.len());
+    let mut done = 0;
+    let mut sounds = Vec::with_capacity(parts.len());
+    for part in &parts {
+        let mut part_sounds = Vec::with_capacity(part.len());
+        for piece in part {
+            if control.stopped() {
+                return Ok(None);
+            }
+            part_sounds.push(job.sound_of(piece)?);
+            done += 1;
+            rep.send(Msg::Progress(done as f32 / total as f32));
         }
-        sounds.push(job.sound_of(piece)?);
-        rep.send(Msg::Progress((done + 1) as f32 / pieces.len() as f32));
+        sounds.push(audio::join(part_sounds).context("there was nothing to save")?);
     }
-    let pcm = audio::join(sounds).context("there was nothing to save")?;
-    audio::save_mp3(&pcm, path)?;
-    Ok(true)
+    anyhow::ensure!(!sounds.is_empty(), "there was nothing to save");
+    if stitch && sounds.len() > 1 {
+        sounds = vec![audio::join(sounds).context("there was nothing to save")?];
+    }
+    let count = sounds.len();
+    let mut saved = Vec::with_capacity(count);
+    for (i, pcm) in sounds.iter().enumerate() {
+        let out = if count == 1 { path.to_path_buf() } else { part_path(path, i + 1, count) };
+        audio::save_mp3(pcm, &out)?;
+        saved.push(out);
+    }
+    Ok(Some(saved))
+}
+
+/// `speech.mp3` becomes `speech (part 2 of 3).mp3`.
+fn part_path(path: &Path, number: usize, count: usize) -> PathBuf {
+    let stem = path.file_stem().map_or_else(|| "speech".into(), |s| s.to_string_lossy().into_owned());
+    path.with_file_name(format!("{stem} (part {number} of {count}).mp3"))
+}
+
+fn saved_message(saved: &[PathBuf]) -> String {
+    match saved {
+        [one] => format!("Saved {}.", display_name(one)),
+        [first, .., last] => format!(
+            "The text was over {} characters, so it was saved in {} parts, {} to {}.",
+            speech::PART_CHARS,
+            saved.len(),
+            display_name(first),
+            display_name(last)
+        ),
+        [] => "Nothing was saved.".to_owned(),
+    }
 }
 
 /// Decodes an audio file and judges whether it is speech.
@@ -459,7 +516,7 @@ mod tests {
         let (tx, rx) = std::sync::mpsc::channel();
         let rep = Reporter::new(tx, egui::Context::default());
         let out = dir.path().join("out.mp3");
-        assert!(run_save(&rep, &Control::default(), &job, &out).unwrap());
+        assert_eq!(run_save(&rep, &Control::default(), &job, &out, false).unwrap(), Some(vec![out.clone()]));
         let pcm = audio::decode(std::fs::read(&out).unwrap()).unwrap();
         assert!(pcm.samples.len() > pcm.rate as usize, "more than a second of speech");
         assert!(rx.try_iter().any(|m| matches!(m, Msg::Progress(p) if p == 1.0)));
@@ -498,6 +555,68 @@ mod tests {
     }
 
     #[test]
+    fn long_text_is_split_into_parts() {
+        let job = SpeechJob {
+            text: Arc::new("A sentence of some length. ".repeat(400)),
+            provider: Provider::Deepgram,
+            key: String::new(),
+            voice: String::new(),
+            wordlists: Vec::new(),
+        };
+        let parts = job.parts().unwrap();
+        assert_eq!(parts.len(), 3);
+        assert!(parts.iter().all(|p| p.join(" ").chars().count() <= speech::PART_CHARS));
+        assert!(parts.iter().flatten().all(|piece| piece.chars().count() <= 1900));
+        let short = SpeechJob { text: Arc::new("Short.".to_owned()), ..job };
+        assert_eq!(short.parts().unwrap(), [["Short."]]);
+    }
+
+    #[test]
+    fn parts_are_numbered() {
+        let path = Path::new("dir").join("my speech.mp3");
+        assert_eq!(part_path(&path, 2, 3), Path::new("dir").join("my speech (part 2 of 3).mp3"));
+        let saved = [part_path(&path, 1, 2), part_path(&path, 2, 2)];
+        assert_eq!(
+            saved_message(&saved),
+            "The text was over 4500 characters, so it was saved in 2 parts, my speech (part 1 of 2).mp3 to my speech (part 2 of 2).mp3."
+        );
+        assert_eq!(saved_message(&[path]), "Saved my speech.mp3.");
+    }
+
+    /// Uses the real system voice. CI installs eSpeak NG for this on Ubuntu.
+    #[cfg(unix)]
+    #[test]
+    fn long_text_saves_several_files() {
+        let dir = tempfile::tempdir().unwrap();
+        let out = dir.path().join("long.mp3");
+        let job = SpeechJob {
+            text: Arc::new("Words. ".repeat(700)),
+            provider: Provider::System,
+            key: String::new(),
+            voice: String::new(),
+            wordlists: Vec::new(),
+        };
+        let (tx, _rx) = std::sync::mpsc::channel();
+        let rep = Reporter::new(tx, egui::Context::default());
+        let saved = run_save(&rep, &Control::default(), &job, &out, false).unwrap().unwrap();
+        assert_eq!(saved, [part_path(&out, 1, 2), part_path(&out, 2, 2)]);
+        assert!(saved.iter().all(|p| p.exists()));
+        assert!(!out.exists());
+        let part_seconds: usize = saved.iter().map(|p| seconds(p)).sum();
+
+        let joined = dir.path().join("joined.mp3");
+        let saved = run_save(&rep, &Control::default(), &job, &joined, true).unwrap().unwrap();
+        assert_eq!(saved, std::slice::from_ref(&joined), "stitched into the one file chosen");
+        assert!(!part_path(&joined, 1, 2).exists());
+        assert!(seconds(&joined).abs_diff(part_seconds) <= 1, "all the parts are in it");
+    }
+
+    fn seconds(path: &Path) -> usize {
+        let pcm = audio::decode(std::fs::read(path).unwrap()).unwrap();
+        pcm.samples.len() / pcm.rate as usize
+    }
+
+    #[test]
     fn stopping_writes_no_file() {
         let dir = tempfile::tempdir().unwrap();
         let out = dir.path().join("out.mp3");
@@ -512,7 +631,7 @@ mod tests {
         control.request_stop();
         let (tx, _rx) = std::sync::mpsc::channel();
         let rep = Reporter::new(tx, egui::Context::default());
-        assert!(!run_save(&rep, &control, &job, &out).unwrap());
+        assert!(run_save(&rep, &control, &job, &out, true).unwrap().is_none());
         assert!(!out.exists());
     }
 }

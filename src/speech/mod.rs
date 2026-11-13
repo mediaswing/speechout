@@ -93,6 +93,16 @@ pub fn split_text(text: &str, provider: Provider) -> Vec<String> {
     split_at_most(text, provider.max_chars())
 }
 
+/// The most characters of text in one saved MP3 file. Longer text is saved
+/// as several files, one for each part.
+pub const PART_CHARS: usize = 4500;
+
+/// Splits text into the parts saved as separate MP3 files, between sentences
+/// where possible, each at most [`PART_CHARS`] characters.
+pub fn split_into_parts(text: &str) -> Vec<String> {
+    split_at_most(text, PART_CHARS)
+}
+
 fn split_at_most(text: &str, limit: usize) -> Vec<String> {
     let mut pieces = Vec::new();
     let mut rest = text.trim();
@@ -166,6 +176,15 @@ mod tests {
             let words = |s: &str| s.split_whitespace().map(str::to_owned).collect::<Vec<_>>();
             assert_eq!(words(&pieces.join(" ")), words(&text));
         }
+    }
+
+    #[test]
+    fn long_text_is_saved_in_parts() {
+        let text = "A sentence of some length. ".repeat(400);
+        let parts = split_into_parts(&text);
+        assert_eq!(parts.len(), 3);
+        assert!(parts.iter().all(|p| p.chars().count() <= PART_CHARS && p.ends_with('.')));
+        assert_eq!(split_into_parts(&"x".repeat(PART_CHARS)).len(), 1);
     }
 
     #[test]

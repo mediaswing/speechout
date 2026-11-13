@@ -1,5 +1,11 @@
 # Changelog
 
+## [Unreleased]
+
+- **Long text is saved in parts.** Text over 4,500 characters is saved as
+  numbered MP3 files, such as `speech (part 1 of 3).mp3`. A new setting under
+  **Saving MP3 Files** on the Settings tab stitches the parts into one file.
+
 ## [5.0.0] - 2026-11-12
 
 Common Speech Output (`speechout`) is an accessible text-to-speech reader for

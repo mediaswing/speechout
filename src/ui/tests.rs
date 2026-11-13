@@ -495,7 +495,7 @@ fn headings_are_headings() {
     };
     assert_eq!(headings(&h), ["General"]);
     command(&mut h, Key::Num2);
-    assert_eq!(headings(&h), ["Settings", "Speech Services", "Appearance", "Describing Images", "Transcribing Audio", "Updates"]);
+    assert_eq!(headings(&h), ["Settings", "Speech Services", "Appearance", "Saving MP3 Files", "Describing Images", "Transcribing Audio", "Updates"]);
     command(&mut h, Key::Num3);
     assert_eq!(headings(&h), ["Wordlist", "Installed Wordlists"]);
     command(&mut h, Key::Num4);
@@ -1449,4 +1449,19 @@ fn update_checks_can_be_turned_off_from_the_keyboard() {
     press(&mut h, Key::ArrowDown);
     assert!(!saved_settings(&h).check_updates);
     focus_on(&mut h, "Check for updates now");
+}
+
+#[test]
+fn long_mp3s_can_be_stitched_from_the_keyboard() {
+    let (mut h, _) = window();
+    assert!(!saved_settings(&h).stitch_parts, "separate parts unless asked");
+    command(&mut h, Key::Num2);
+    focus_on(&mut h, "When long text is saved as MP3");
+    assert_eq!(focused_role(&h), Some(Role::ComboBox));
+    press(&mut h, Key::ArrowDown);
+    assert!(saved_settings(&h).stitch_parts);
+    let value = node_by_label(&h, "When long text is saved as MP3").accesskit_node().value().unwrap();
+    assert!(value.contains("one file"), "a screen reader hears the choice: {value}");
+    press(&mut h, Key::Home);
+    assert!(!saved_settings(&h).stitch_parts);
 }

@@ -60,6 +60,10 @@ pane. Choosing a file, with Ctrl+O or by dropping one on the window, goes back t
 **Speech Service** and a **Voice**, and use **Read Aloud**, **Pause**, **Stop** or
 **Save as MP3**. Cloud services appear once you've saved a key for them.
 
+Text over 4,500 characters is saved as several MP3 files, named like
+`speech (part 1 of 3).mp3`. To get one file instead, choose **Stitch the parts
+together into one file** under **Saving MP3 Files** on the Settings tab.
+
 A CSV file is read as sentences rather than cell by cell. The reading starts with
 how many rows there are and what the columns are called, then each row is one
 sentence that names its columns, such as `Transaction ID TXN-0002: date 3 January
