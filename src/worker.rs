@@ -13,6 +13,7 @@ use anyhow::Context;
 
 use crate::audio::{self, Playback};
 use crate::document::{self, FileKind};
+use crate::id3;
 use crate::speech::{self, Provider, Voice};
 use crate::store::AiKind;
 use crate::transcribe::{self, Heard, whisper};
@@ -373,7 +374,9 @@ fn save_parts(
         let file_ends = !stitch || i + 1 == parts.len();
         if file_ends && let Some(finished) = encoder.take() {
             let out = &outputs[staged.len()];
-            staged.push((audio::stage(&finished.finish()?, out)?, out.clone()));
+            let mut bytes = id3::tag(&id3::title_for(out));
+            bytes.extend(finished.finish()?);
+            staged.push((audio::stage(&bytes, out)?, out.clone()));
         }
     }
     anyhow::ensure!(staged.len() == outputs.len(), "there was nothing to save");
@@ -711,6 +714,19 @@ mod tests {
         assert_eq!(save_tones(&[&["1"]], &single, false).unwrap().unwrap(), std::slice::from_ref(&single));
         assert!(save_tones(&[], &single, true).is_err());
         assert_eq!(files_in(dir.path()).len(), 4, "no temporary files are left: {:?}", files_in(dir.path()));
+    }
+
+    #[test]
+    fn saved_files_are_tagged_with_the_app_and_their_title() {
+        let dir = tempfile::tempdir().unwrap();
+        let out = dir.path().join("weekly_news-round-up.mp3");
+        for saved in save_tones(&[&["1"], &["1"]], &out, false).unwrap().unwrap() {
+            assert!(id3::made_here(&saved), "{}", saved.display());
+            let tag = id3::tag(&id3::title_for(&saved));
+            assert!(std::fs::read(&saved).unwrap().starts_with(&tag), "{}", saved.display());
+            assert!((seconds(&saved) - 1.0).abs() < 0.1, "the tag doesn't get in the way of the sound");
+        }
+        assert_eq!(id3::title_for(&part_path(&out, 2, 2)), "Weekly News Round Up (Part 2 Of 2)");
     }
 
     #[test]

@@ -1,5 +1,18 @@
 # Changelog
 
+## [5.1.3] - 2026-11-18
+
+- **Saved MP3 files are tagged.** The artist is "Common Speech Output" and the
+  title comes from the file name, with underscores and hyphens as spaces and
+  each word starting with a capital, so `my_talk-notes.mp3` is called "My Talk
+  Notes" in music players. Each part of a long text gets its own title, such as
+  "Speech (Part 2 Of 3)".
+- **The Audio Player doesn't transcribe speech the app saved.** A file tagged
+  as Common Speech Output's is speech made from text you already have, so the
+  status bar says so instead of transcribing it. **Transcribe** still
+  transcribes it if you want. Files saved by earlier versions have no tag, so
+  they are still judged by how they sound.
+
 ## [5.1.2] - 2026-11-13
 
 - **A new version found when the app starts is shown in a dialog**, which

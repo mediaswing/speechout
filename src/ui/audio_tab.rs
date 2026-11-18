@@ -104,8 +104,14 @@ impl App {
         };
         let verdict = heard.verdict;
         let shortened = heard.shortened;
+        let heard_made_here = heard.made_here;
         self.audio.heard = Some(heard);
-        if verdict.is_speech() {
+        if heard_made_here {
+            self.set_info(format!(
+                "{name} was saved by Common Speech Output, so it is speech made from text you already have and won't \
+                 be transcribed. Press Transcribe to transcribe it anyway."
+            ));
+        } else if verdict.is_speech() {
             let note = if shortened { " Only its first two hours will be transcribed." } else { "" };
             self.set_info(format!("{name} sounds like speech, so it will be transcribed.{note}"));
             self.start_transcription();

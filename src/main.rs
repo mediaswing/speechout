@@ -3,6 +3,7 @@
 
 mod audio;
 mod document;
+mod id3;
 mod logging;
 mod package;
 mod platform;

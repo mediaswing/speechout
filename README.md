@@ -66,6 +66,9 @@ Text over 4,500 characters is saved as several MP3 files, named like
 before replacing them. To get one file instead, choose **Stitch the parts
 together into one file** under **Saving MP3 Files** on the Settings tab.
 
+Each MP3 is tagged with the artist "Common Speech Output" and a title made from
+its file name, so `my_talk-notes.mp3` is called "My Talk Notes".
+
 A CSV file is read as sentences rather than cell by cell. The reading starts with
 how many rows there are and what the columns are called, then each row is one
 sentence that names its columns, such as `Transaction ID TXN-0002: date 3 January
@@ -133,8 +136,8 @@ Choose an MP3 (or WAV) file, then use **Play**, **Pause** and **Stop**. While th
 opens, the app listens to its waveform to tell whether it is mostly speech. If it is,
 it is transcribed, and the transcript appears in the **Transcript** box, with a new
 paragraph each time the speaker changes, such as `Speaker 2 (1:05): Thanks for
-having me.` Music and other sounds aren't transcribed, but **Transcribe** tries
-anyway. **Save the transcript** saves it as a text file. Only the first two hours of
+having me.` Music and other sounds aren't transcribed, and nor are MP3s this app
+saved, as you already have their text, but **Transcribe** tries anyway. **Save the transcript** saves it as a text file. Only the first two hours of
 a recording are transcribed.
 
 Transcribing uses whisper.cpp's `whisper-cli` program and its base English model.
@@ -240,6 +243,7 @@ On Windows, HEIC photos use Windows' own codecs unless you build with
 | `src/speech/` | System and cloud voices |
 | `src/document.rs` | Text from PDF, TXT, DOCX and CSV |
 | `src/table.rs` | CSV tables as sentences to read aloud |
+| `src/id3.rs` | The ID3 tags on saved MP3s, and spotting the app's own |
 | `src/vision.rs` | Image descriptions and GPS |
 | `src/transcribe/` | Telling speech from music, whisper.cpp, and telling speakers apart |
 | `src/wordlist.rs`, `wordlists/` | Wordlists and the examples |

@@ -33,6 +33,9 @@ pub struct Heard {
     pub verdict: Verdict,
     /// Only the first [`MAX_SECONDS`] were kept.
     pub shortened: bool,
+    /// Saved by this app, so it is speech made from text that the user
+    /// already has, and isn't transcribed unless asked.
+    pub made_here: bool,
 }
 
 impl Heard {
@@ -50,7 +53,7 @@ pub fn listen(path: &Path) -> anyhow::Result<Heard> {
         bail!("no sound could be read from it");
     }
     let verdict = detect::judge(&samples);
-    Ok(Heard { samples, verdict, shortened })
+    Ok(Heard { samples, verdict, shortened, made_here: crate::id3::made_here(path) })
 }
 
 /// Mixes down to mono and resamples to 16 kHz as it decodes, so a long file

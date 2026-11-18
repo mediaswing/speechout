@@ -1254,6 +1254,22 @@ fn music_is_not_transcribed_and_nothing_is_asked() {
     assert!(!app(&h).audio.is_transcribing());
 }
 
+#[test]
+fn speech_saved_by_the_app_is_not_transcribed() {
+    let dir = tempfile::tempdir().unwrap();
+    let mine = dir.path().join("mine.mp3");
+    let mut bytes = crate::id3::tag("Mine");
+    bytes.extend(std::fs::read(chord_mp3(dir.path())).unwrap());
+    std::fs::write(&mine, bytes).unwrap();
+    let (mut h, script) = window();
+    command(&mut h, Key::Num4);
+    script.files.borrow_mut().push_back(mine);
+    command(&mut h, Key::O);
+    wait_for_status(&mut h, "won't be transcribed");
+    assert!(status(&h).contains("mine.mp3 was saved by Common Speech Output"), "{}", status(&h));
+    assert!(!app(&h).audio.is_transcribing());
+}
+
 /// Opens the chord, waits until it's heard, and presses Transcribe.
 fn transcribe_the_chord(h: &mut Window, script: &Script, dir: &std::path::Path) {
     command(h, Key::Num4);
