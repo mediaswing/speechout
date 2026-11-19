@@ -131,8 +131,11 @@ pub fn persist(file: tempfile::NamedTempFile, path: &Path) -> anyhow::Result<()>
 /// `TempPath::persist` if what replaces it can't all be saved. Dropped instead,
 /// the old file is deleted. `None` if there was no file.
 pub fn move_aside(path: &Path) -> anyhow::Result<Option<tempfile::TempPath>> {
-    if std::fs::symlink_metadata(path).is_err() {
-        return Ok(None);
+    let Ok(metadata) = std::fs::symlink_metadata(path) else { return Ok(None) };
+    let name = path.file_name().map_or_else(|| path.display().to_string(), |n| n.to_string_lossy().into_owned());
+    // Windows would move a folder aside too, but couldn't delete it afterwards.
+    if metadata.is_dir() {
+        anyhow::bail!("{name} is a folder, so it can't be replaced with an MP3 file");
     }
     let dir = path.parent().filter(|d| !d.as_os_str().is_empty()).unwrap_or(Path::new("."));
     let aside = tempfile::Builder::new()
@@ -141,7 +144,6 @@ pub fn move_aside(path: &Path) -> anyhow::Result<Option<tempfile::TempPath>> {
         .tempfile_in(dir)
         .with_context(|| format!("could not write to {}", dir.display()))?
         .into_temp_path();
-    let name = path.file_name().map_or_else(|| path.display().to_string(), |n| n.to_string_lossy().into_owned());
     std::fs::rename(path, &aside)
         .with_context(|| format!("{name} could not be replaced. It may be open in another program"))?;
     Ok(Some(aside))
