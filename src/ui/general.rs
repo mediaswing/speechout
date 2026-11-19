@@ -129,7 +129,7 @@ impl App {
             address: self.settings.ai_address.clone(),
             model: self.settings.ai_model.clone(),
         };
-        worker::load_file(&self.rep, self.load_id, path, kind, ai, self.settings.resolve_gps);
+        worker::load_file(&self.rep, self.load_id, path, kind, ai, self.settings.resolve_gps, self.models_id);
     }
 
     pub(super) fn file_loaded(&mut self, id: u64, result: Result<String, String>) {
@@ -213,20 +213,27 @@ impl App {
         let Some(mut path) = self.dialogs.save_file("Save the speech as an MP3 file", &suggested, "MP3 audio", &["mp3"]) else {
             return;
         };
-        if !path.extension().is_some_and(|e| e.eq_ignore_ascii_case("mp3")) {
+        // The save dialog asked about the name as typed, not with this added.
+        let added_extension = !path.extension().is_some_and(|e| e.eq_ignore_ascii_case("mp3"));
+        if added_extension {
             path.as_mut_os_string().push(".mp3");
         }
         // Long text is saved as numbered parts, which the save dialog didn't
-        // ask about, so any already there are asked about here.
+        // ask about either, so any already there are asked about here.
         let outputs = match job.output_paths(&path, self.settings.stitch_parts) {
             Ok(outputs) => outputs,
             Err(e) => return self.set_error(worker::sentence(&e)),
         };
-        let existing: Vec<String> = outputs.iter().filter(|p| **p != path && p.exists()).map(|p| display_name(p)).collect();
+        let existing: Vec<String> =
+            outputs.iter().filter(|p| (added_extension || **p != path) && p.exists()).map(|p| display_name(p)).collect();
         if !existing.is_empty() {
+            let parts = if outputs.len() > 1 {
+                format!("The text is long, so it will be saved in {} parts. ", outputs.len())
+            } else {
+                String::new()
+            };
             let question = format!(
-                "The text is long, so it will be saved in {} parts. {} already exist{}: {}.\n\nReplace {}?",
-                outputs.len(),
+                "{parts}{} already exist{}: {}.\n\nReplace {}?",
                 if existing.len() == 1 { "This file" } else { "These files" },
                 if existing.len() == 1 { "s" } else { "" },
                 existing.join(", "),

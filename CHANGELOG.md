@@ -1,5 +1,29 @@
 # Changelog
 
+## [5.1.4] - 2026-11-19
+
+- **The release notes link to VirusTotal scans.** Every download is scanned by
+  VirusTotal when a release is built, and a table at the end of the release
+  notes says how many virus scanners flagged each one, with a link to its full
+  report.
+- **A save in parts that fails puts the old files back.** If one part of a long
+  text can't be saved, for example because a file it would replace is open in
+  another program, every file that was there before is left as it was. Before,
+  a part that had already replaced an older file was deleted, and the older
+  file was lost.
+- **Saving asks before replacing a file whose extension the app added.** If
+  you type a name without `.mp3`, or `.txt` for a transcript, and a file with
+  the full name already exists, the app now asks before replacing it, because
+  the save dialog only checked the name as typed.
+- **Changing the local AI system is saved at once**, even if the address
+  needs correcting first. Before, it was forgotten when the app closed.
+- **The list of image description models is always for the current server.**
+  A slow answer from a server you had switched away from could replace it.
+- **Image descriptions keep minus signs and asterisks.** Only clear markdown is
+  removed, so "-5 degrees" and "3 * 4" are read as written.
+- **Amounts of money in CSV files are rounded to the nearest penny**, so
+  £1.995 is read as 2 pounds rather than 1 pound 99 pence.
+
 ## [5.1.3] - 2026-11-18
 
 - **Saved MP3 files are tagged.** The artist is "Common Speech Output" and the

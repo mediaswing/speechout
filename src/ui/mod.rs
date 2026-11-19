@@ -34,7 +34,7 @@ use egui::{RichText, Ui};
 
 use crate::speech::{Provider, Voice};
 use crate::store::{Installed, Settings, Store};
-use crate::worker::{self, Control, Msg, Reporter};
+use crate::worker::{Control, Msg, Reporter};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Tab {
@@ -166,6 +166,8 @@ pub struct App {
     saved_keys: HashMap<Provider, bool>,
     ai_address_input: String,
     models: Loadable<Vec<String>>,
+    /// Which request for the models is the latest. Answers to others are ignored.
+    models_id: u64,
     log_dir_input: String,
 
     whisper_input: String,
@@ -246,6 +248,7 @@ impl App {
             key_input: String::new(),
             saved_keys,
             models: Loadable::Loading,
+            models_id: 0,
             wordlists,
             wordlist_to_remove: 0,
             newer_version: None,
@@ -260,7 +263,7 @@ impl App {
             app.settings.provider = Provider::System;
         }
         app.ensure_voices(app.settings.provider);
-        worker::list_models(&app.rep, app.settings.ai_kind, app.settings.ai_address.clone(), false);
+        app.request_models(false);
         app
     }
 
@@ -296,7 +299,7 @@ impl App {
         while let Ok(msg) = self.rx.try_recv() {
             match msg {
                 Msg::Voices(provider, result) => self.voices_loaded(provider, result),
-                Msg::Models(result, requested) => self.models_listed(result, requested),
+                Msg::Models(id, result, requested) => self.models_listed(id, result, requested),
                 Msg::Loaded(id, result) => self.file_loaded(id, result),
                 Msg::LoadStatus(id, text) => {
                     if id == self.load_id {

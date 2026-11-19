@@ -127,6 +127,26 @@ pub fn persist(file: tempfile::NamedTempFile, path: &Path) -> anyhow::Result<()>
     Ok(())
 }
 
+/// Moves any file at `path` aside, beside it, so it can be put back with
+/// `TempPath::persist` if what replaces it can't all be saved. Dropped instead,
+/// the old file is deleted. `None` if there was no file.
+pub fn move_aside(path: &Path) -> anyhow::Result<Option<tempfile::TempPath>> {
+    if std::fs::symlink_metadata(path).is_err() {
+        return Ok(None);
+    }
+    let dir = path.parent().filter(|d| !d.as_os_str().is_empty()).unwrap_or(Path::new("."));
+    let aside = tempfile::Builder::new()
+        .prefix(".commonspeech-")
+        .suffix(".old")
+        .tempfile_in(dir)
+        .with_context(|| format!("could not write to {}", dir.display()))?
+        .into_temp_path();
+    let name = path.file_name().map_or_else(|| path.display().to_string(), |n| n.to_string_lossy().into_owned());
+    std::fs::rename(path, &aside)
+        .with_context(|| format!("{name} could not be replaced. It may be open in another program"))?;
+    Ok(Some(aside))
+}
+
 /// Writes an MP3 file all at once: into a temporary file beside it, then moved
 /// into place, so a failure can't leave half a file or spoil an existing one.
 /// The app saves speech a piece at a time instead; tests make files with this.

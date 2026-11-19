@@ -197,10 +197,37 @@ fn prepare_image(path: &Path, kind: FileKind) -> anyhow::Result<Vec<u8>> {
 fn plain_text(text: &str) -> String {
     clean_lines(text)
         .lines()
-        .map(|l| l.trim_start_matches(['#', '-', '*', '>', ' ']).replace("**", "").replace('*', ""))
+        .map(without_markdown)
         .filter(|l| !l.trim().is_empty())
         .collect::<Vec<_>>()
         .join("\n\n")
+}
+
+/// A line without markdown's headings, quotes, list markers and emphasis. Only
+/// what is plainly markdown goes, so "-5 degrees" keeps its minus sign and
+/// "3 * 4" its asterisk.
+fn without_markdown(line: &str) -> String {
+    // Strong first, so its pairs aren't taken for two pairs of single asterisks.
+    static EMPHASIS: OnceLock<[regex::Regex; 3]> = OnceLock::new();
+    let emphasis = EMPHASIS.get_or_init(|| {
+        [r"\*\*(\S(?:.*?\S)?)\*\*", r"__(\S(?:.*?\S)?)__", r"\*(\S(?:[^*]*?\S)?)\*"]
+            .map(|pattern| regex::Regex::new(pattern).expect("a valid pattern"))
+    });
+    let mut rest = line.trim_start();
+    loop {
+        let hashes = rest.len() - rest.trim_start_matches('#').len();
+        let next = if let Some(after) = rest.strip_prefix('>') {
+            after
+        } else if (1..=6).contains(&hashes) && rest[hashes..].starts_with(' ') {
+            &rest[hashes..]
+        } else if let Some(after) = ["- ", "* ", "+ "].iter().find_map(|marker| rest.strip_prefix(marker)) {
+            after
+        } else {
+            break;
+        };
+        rest = next.trim_start();
+    }
+    emphasis.iter().fold(rest.to_owned(), |text, pattern| pattern.replace_all(&text, "$1").into_owned())
 }
 
 fn clean_lines(text: &str) -> String {
@@ -585,6 +612,16 @@ mod tests {
     #[test]
     fn strips_markdown_and_control_characters() {
         assert_eq!(plain_text("# Title\n\n- **A** cat\u{202E}\u{7}\n* sits"), "Title\n\nA cat\n\nsits");
+        assert_eq!(plain_text("> ## A *quoted* __heading__"), "A quoted heading");
+        assert_eq!(plain_text("- *Nested*\n  + item"), "Nested\n\nitem");
+    }
+
+    #[test]
+    fn keeps_what_only_looks_like_markdown() {
+        assert_eq!(plain_text("-5 degrees outside"), "-5 degrees outside");
+        assert_eq!(plain_text("The sign says 3 * 4 = 12"), "The sign says 3 * 4 = 12");
+        assert_eq!(plain_text("#1 in the charts"), "#1 in the charts");
+        assert_eq!(plain_text("A footnote*"), "A footnote*");
     }
 
     #[test]

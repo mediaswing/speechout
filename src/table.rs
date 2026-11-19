@@ -277,9 +277,8 @@ fn say_money(a: &Amount, currency: Option<Currency>, code: &str) -> String {
         let code = if code.is_empty() { String::new() } else { format!(" {}", code.trim()) };
         return format!("{sign}{}{fraction}{code}", thousands(&a.whole));
     };
-    // Hundredths, from however many decimal places there are.
-    let hundredths: u32 = a.fraction.as_ref().map_or(0, |f| format!("{f:0<2}")[..2].parse().unwrap_or(0));
-    let whole = thousands(&a.whole);
+    let (whole, hundredths) = to_hundredths(&a.whole, a.fraction.as_deref());
+    let whole = thousands(&whole);
     let units = |n: &str, one: &'static str, many: &'static str| format!("{n} {}", if n == "1" { one } else { many });
     let main = units(&whole, c.one, c.many);
     let small = units(&hundredths.to_string(), c.one_hundredth, c.hundredths);
@@ -288,6 +287,36 @@ fn say_money(a: &Amount, currency: Option<Currency>, code: &str) -> String {
         ("0", _) => format!("{sign}{small}"),
         _ => format!("{sign}{main} {small}"),
     }
+}
+
+/// An amount rounded to the nearest hundredth, from however many decimal
+/// places it has: the whole part's digits, and the hundredths. 1.995 is 2 and 0.
+fn to_hundredths(whole: &str, fraction: Option<&str>) -> (String, u32) {
+    let digits = format!("{:0<3}", fraction.unwrap_or(""));
+    let mut hundredths: u32 = digits[..2].parse().unwrap_or(0);
+    if digits.as_bytes()[2] >= b'5' {
+        hundredths += 1;
+    }
+    if hundredths < 100 {
+        return (whole.to_owned(), hundredths);
+    }
+    // Carry one into the whole part, which can be any number of digits long.
+    let mut carried = whole.as_bytes().to_vec();
+    let mut at = carried.len();
+    loop {
+        if at == 0 {
+            carried.insert(0, b'1');
+            break;
+        }
+        at -= 1;
+        if carried[at] == b'9' {
+            carried[at] = b'0';
+        } else {
+            carried[at] += 1;
+            break;
+        }
+    }
+    (String::from_utf8(carried).unwrap_or_default(), 0)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -477,6 +506,17 @@ TXN-0004,2026-01-07,Electricity,Utilities,Expense,-68.24,GBP,4831.76
         );
         assert!(lines[3].contains("amount minus 68 pounds 24 pence and balance 4,831 pounds 76 pence."), "{}", lines[3]);
         assert_eq!(lines.len(), 4);
+    }
+
+    #[test]
+    fn money_is_rounded_to_the_nearest_penny() {
+        let say = |text: &str| say_money(&amount(text).unwrap(), Some(POUNDS), "");
+        assert_eq!(say("£1.994"), "1 pound 99 pence");
+        assert_eq!(say("£1.995"), "2 pounds");
+        assert_eq!(say("£999.999"), "1,000 pounds");
+        assert_eq!(say("£0.005"), "1 penny");
+        assert_eq!(say("£2.5"), "2 pounds 50 pence");
+        assert_eq!(say("-£3"), "minus 3 pounds");
     }
 
     #[test]

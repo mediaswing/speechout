@@ -303,6 +303,13 @@ impl App {
         };
         if !path.extension().is_some_and(|e| e.eq_ignore_ascii_case("txt")) {
             path.as_mut_os_string().push(".txt");
+            // The save dialog asked about the name without this added.
+            if path.exists() {
+                let question = format!("{} already exists.\n\nReplace it?", display_name(&path));
+                if !self.dialogs.confirm("Replace the file?", &question) {
+                    return self.set_info("The transcript wasn't saved, so the existing file is as it was.");
+                }
+            }
         }
         match std::fs::write(&path, &self.audio.transcript) {
             Ok(()) => self.set_info(format!("Saved {}.", display_name(&path))),

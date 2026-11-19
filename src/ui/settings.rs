@@ -119,7 +119,19 @@ impl App {
         }
     }
 
-    pub(super) fn models_listed(&mut self, result: Result<Vec<String>, String>, requested: bool) {
+    /// Asks the local AI server for its models, as the settings now have it.
+    pub(super) fn request_models(&mut self, requested: bool) {
+        self.models_id += 1;
+        self.models = Loadable::Loading;
+        let (kind, address) = (self.settings.ai_kind, self.settings.ai_address.clone());
+        worker::list_models(&self.rep, self.models_id, kind, address, requested);
+    }
+
+    pub(super) fn models_listed(&mut self, id: u64, result: Result<Vec<String>, String>, requested: bool) {
+        // An answer about a server or address that has since been changed.
+        if id != self.models_id {
+            return;
+        }
         match result {
             Ok(models) => {
                 if requested {
@@ -144,9 +156,8 @@ impl App {
                 self.ai_address_input = address.clone();
                 self.settings.ai_address = address.clone();
                 self.save_settings();
-                self.models = Loadable::Loading;
                 self.set_info("Looking for models.");
-                worker::list_models(&self.rep, self.settings.ai_kind, address, true);
+                self.request_models(true);
             }
             Err(e) => self.set_error(worker::sentence(&e)),
         }
@@ -174,6 +185,8 @@ impl App {
                 self.ai_address_input = self.settings.ai_kind.default_address().to_owned();
             }
             self.settings.ai_model.clear();
+            // Kept even if the address below needs correcting first.
+            self.save_settings();
             self.refresh_models();
         }
         let field = text_field(ui, "Local AI address, which must be on this computer", "ai_address", &mut self.ai_address_input);

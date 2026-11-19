@@ -24,7 +24,8 @@ use crate::wordlist::{Substitutions, Wordlist};
 pub enum Msg {
     Voices(Provider, Result<Vec<Voice>, String>),
     /// The models on the local AI server, and whether the user asked for them.
-    Models(Result<Vec<String>, String>, bool),
+    /// The number says which request it answers.
+    Models(u64, Result<Vec<String>, String>, bool),
     /// A file's text or description. The number says which request it answers.
     Loaded(u64, Result<String, String>),
     /// What is happening with a file being opened, numbered in the same way.
@@ -205,16 +206,16 @@ pub fn load_voices(rep: &Reporter, provider: Provider, key: String) {
     );
 }
 
-pub fn list_models(rep: &Reporter, kind: AiKind, address: String, requested: bool) {
+pub fn list_models(rep: &Reporter, id: u64, kind: AiKind, address: String, requested: bool) {
     rep.spawn_or(
         move |rep| {
             let models = vision::list_models(kind, &address).map_err(|e| {
                 log::info!("Listing local AI models failed: {e:#}");
                 sentence(&e)
             });
-            rep.send(Msg::Models(models, requested));
+            rep.send(Msg::Models(id, models, requested));
         },
-        move || Msg::Models(Err(PANIC.to_owned()), requested),
+        move || Msg::Models(id, Err(PANIC.to_owned()), requested),
     );
 }
 
@@ -233,8 +234,10 @@ pub fn check_for_update(rep: &Reporter, requested: bool) {
     );
 }
 
-/// Reads a document's text, or describes an image.
-pub fn load_file(rep: &Reporter, id: u64, path: PathBuf, kind: FileKind, ai: LocalAi, resolve_gps: bool) {
+/// Reads a document's text, or describes an image. `models_id` is the latest
+/// request for the local AI server's models, which this answers again if it
+/// has to start Ollama.
+pub fn load_file(rep: &Reporter, id: u64, path: PathBuf, kind: FileKind, ai: LocalAi, resolve_gps: bool, models_id: u64) {
     let job = move |rep: &Reporter| {
         log::info!("Opening a {kind:?} file");
         let started = AtomicBool::new(false);
@@ -251,7 +254,7 @@ pub fn load_file(rep: &Reporter, id: u64, path: PathBuf, kind: FileKind, ai: Loc
         // Ollama wasn't running when the Settings tab asked for its models.
         if started.load(Ordering::SeqCst) {
             let models = vision::list_models(ai.kind, &ai.address).map_err(|e| sentence(&e));
-            rep.send(Msg::Models(models, false));
+            rep.send(Msg::Models(models_id, models, false));
         }
     };
     // A file that crashes the reader must not end a reading in progress.
@@ -381,17 +384,31 @@ fn save_parts(
     }
     anyhow::ensure!(staged.len() == outputs.len(), "there was nothing to save");
     let mut saved = Vec::with_capacity(staged.len());
+    // Files being replaced are moved aside first, so that if one part can't be
+    // saved, the files that were there before can all be put back.
+    let mut replaced = Vec::new();
     for (file, out) in staged {
-        if let Err(e) = audio::persist(file, &out) {
+        let result = audio::move_aside(&out).and_then(|old| {
+            replaced.extend(old.map(|old| (old, out.clone())));
+            audio::persist(file, &out)
+        });
+        if let Err(e) = result {
             // Not a set with a part missing. Any files not yet moved into place
             // are deleted as they are dropped.
             for written in &saved {
                 let _ = std::fs::remove_file(written);
             }
+            for (old, out) in replaced {
+                if let Err(e) = old.persist(&out) {
+                    log::warn!("Could not put back a file that was being replaced: {}", e.error);
+                }
+            }
             return Err(e);
         }
         saved.push(out);
     }
+    // Saved, so the files they replaced are deleted as they are dropped.
+    drop(replaced);
     Ok(Some(saved))
 }
 
@@ -737,6 +754,28 @@ mod tests {
         assert!(save_tones(&[&["1"], &["broken"]], &out, false).is_err());
         assert_eq!(files_in(dir.path()), ["out (part 1 of 2).mp3"], "nothing new, not even temporary files");
         assert_eq!(std::fs::read(part_path(&out, 1, 2)).unwrap(), b"old", "the earlier file wasn't touched");
+    }
+
+    /// A part that can't be saved, here because a folder is in its way, must
+    /// leave every file as it was, including ones already replaced by earlier parts.
+    #[test]
+    fn a_part_that_cannot_be_saved_puts_the_old_files_back() {
+        let dir = tempfile::tempdir().unwrap();
+        let out = dir.path().join("out.mp3");
+        std::fs::write(part_path(&out, 1, 3), b"old one").unwrap();
+        std::fs::create_dir(part_path(&out, 2, 3)).unwrap();
+        std::fs::write(part_path(&out, 3, 3), b"old three").unwrap();
+        assert!(save_tones(&[&["1"], &["1"], &["1"]], &out, false).is_err());
+        assert_eq!(std::fs::read(part_path(&out, 1, 3)).unwrap(), b"old one");
+        assert!(part_path(&out, 2, 3).is_dir());
+        assert_eq!(std::fs::read(part_path(&out, 3, 3)).unwrap(), b"old three");
+        assert_eq!(files_in(dir.path()).len(), 3, "nothing left over: {:?}", files_in(dir.path()));
+
+        // Replacing works, and leaves only the new files.
+        std::fs::remove_dir(part_path(&out, 2, 3)).unwrap();
+        save_tones(&[&["1"], &["1"], &["1"]], &out, false).unwrap().unwrap();
+        assert_ne!(std::fs::read(part_path(&out, 1, 3)).unwrap(), b"old one");
+        assert_eq!(files_in(dir.path()).len(), 3, "{:?}", files_in(dir.path()));
     }
 
     #[test]

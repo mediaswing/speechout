@@ -12,6 +12,9 @@
 #     the WiX source for an .msi and builds it with the WiX Toolset. The job runs
 #     twice, on x64 and Arm runners, each building and testing an MSI natively.
 #
+# Before publishing, every download is scanned by VirusTotal, and the release
+# notes end with a table of the results and links to the reports.
+#
 # Actions are pinned to full commit hashes, because tags can be moved, and this
 # workflow publishes what people install.
 
@@ -226,9 +229,141 @@ jobs:
           path: dist/*.msi
           if-no-files-found: error
 
+  # Uploads each download to VirusTotal, waits for the scans and writes a table
+  # of the results with links to the full reports. The table goes on this run's
+  # summary page and at the end of the release notes. A detection is a warning,
+  # not a failure, because unsigned installers draw the odd false alarm, and
+  # VirusTotal being slow or down mustn't stop a release. The API key is the
+  # VT_API_KEY secret, and only this step can see it.
+  virustotal:
+    name: Scan the downloads with VirusTotal
+    needs: [macos, linux, windows]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    steps:
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Upload to VirusTotal and wait for the reports
+        continue-on-error: true
+        env:
+          VT_API_KEY: ${{ secrets.VT_API_KEY }}
+        run: |
+          set -uo pipefail
+          shopt -s nullglob
+          files=(dist/*.pkg dist/*.deb dist/*.msi)
+          api=https://www.virustotal.com/api/v3
+          md=virustotal.md
+          reply=$(mktemp)
+          if [ -z "${VT_API_KEY:-}" ]; then
+            echo "::warning::The VT_API_KEY secret isn't set, so the downloads weren't scanned by VirusTotal."
+            exit 0
+          fi
+
+          # The free API allows four requests a minute, so they are spaced out.
+          # Each reply goes to $reply; this isn't run in a subshell, so `last` keeps.
+          last=0
+          vt() {
+            local wait=$((last + 16 - $(date +%s)))
+            if [ "$wait" -gt 0 ]; then sleep "$wait"; fi
+            last=$(date +%s)
+            if ! curl --silent --show-error --fail-with-body --max-time 300 \
+                --header "x-apikey: $VT_API_KEY" --output "$reply" "$@"; then
+              echo "VirusTotal said: $(jq -r '.error.message // "nothing"' "$reply" 2>/dev/null)"
+              return 1
+            fi
+          }
+
+          # Starts a scan of $1, setting `id` to the analysis to wait for. Files
+          # over 32 MB need an upload address of their own.
+          upload() {
+            local url="$api/files"
+            id=""
+            if [ "$(wc -c < "$1")" -gt 32000000 ]; then
+              vt "$api/files/upload_url" || return 1
+              url=$(jq -r '.data // empty' "$reply")
+            fi
+            [ -n "$url" ] && vt --form "file=@$1" "$url" || return 1
+            id=$(jq -r '.data.id // empty' "$reply")
+            [ -n "$id" ]
+          }
+
+          ids=() shas=() results=()
+          for i in "${!files[@]}"; do
+            shas[i]=$(sha256sum "${files[i]}" | cut -d' ' -f1)
+            results[i]=""
+            ids[i]=""
+            if upload "${files[i]}"; then
+              ids[i]=$id
+              echo "Uploaded ${files[i]##*/}"
+            else
+              echo "::warning::${files[i]##*/} could not be uploaded to VirusTotal."
+            fi
+          done
+
+          # Scans usually take a few minutes. One still running after 20 is
+          # linked to anyway, as its report appears there when it's done.
+          deadline=$(($(date +%s) + 20 * 60))
+          waiting=1
+          while [ "$waiting" -eq 1 ] && [ "$(date +%s)" -lt "$deadline" ]; do
+            waiting=0
+            for i in "${!files[@]}"; do
+              if [ -z "${ids[i]}" ] || [ -n "${results[i]}" ]; then continue; fi
+              if vt "$api/analyses/${ids[i]}" && [ "$(jq -r '.data.attributes.status' "$reply")" = completed ]; then
+                results[i]=$(jq -r '.data.attributes.stats
+                  | [(.malicious // 0), (.suspicious // 0),
+                     ((.malicious // 0) + (.suspicious // 0) + (.undetected // 0) + (.harmless // 0))]
+                  | map(tostring) | join(" ")' "$reply")
+                echo "Scanned ${files[i]##*/}"
+              else
+                waiting=1
+              fi
+            done
+          done
+
+          # Nothing to show if VirusTotal couldn't be reached at all.
+          if [ -z "$(printf '%s' "${ids[@]}")" ]; then
+            echo "::warning::None of the downloads could be uploaded to VirusTotal."
+            exit 0
+          fi
+          {
+            echo "### VirusTotal"
+            echo
+            echo "Each download was scanned by VirusTotal when this release was built. The reports have the details, and VirusTotal keeps them up to date."
+            echo
+            echo "| Download | Flagged by | Report |"
+            echo "| --- | --- | --- |"
+          } > "$md"
+          for i in "${!files[@]}"; do
+            name=${files[i]##*/}
+            report="https://www.virustotal.com/gui/file/${shas[i]}"
+            link="[Report]($report)"
+            if [ -n "${results[i]}" ]; then
+              read -r malicious suspicious engines <<< "${results[i]}"
+              flagged=$((malicious + suspicious))
+              found="$flagged of $engines engines"
+              if [ "$flagged" -gt 0 ]; then
+                echo "::warning::VirusTotal: $found flagged $name. Check whether it is a false alarm: $report"
+              fi
+            elif [ -n "${ids[i]}" ]; then
+              found="Still being scanned"
+            else
+              found="Not scanned"
+              link="None"
+            fi
+            echo "| \`$name\` | $found | $link |" >> "$md"
+          done
+          cat "$md" >> "${GITHUB_STEP_SUMMARY:-/dev/null}"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: virustotal
+          path: virustotal.md
+          if-no-files-found: ignore
+
   release:
     name: Publish release
-    needs: [macos, linux, windows]
+    needs: [macos, linux, windows, virustotal]
     runs-on: ubuntu-24.04
     permissions:
       contents: write
@@ -244,6 +379,12 @@ jobs:
         with:
           path: artifacts
           merge-multiple: true
+      - name: Add the VirusTotal reports to the release notes
+        run: |
+          if [ -s artifacts/virustotal.md ]; then
+            printf '\n' >> release-notes.md
+            cat artifacts/virustotal.md >> release-notes.md
+          fi
       - uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3.0.3
         with:
           body_path: release-notes.md

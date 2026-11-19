@@ -1554,3 +1554,26 @@ fn saving_in_parts_asks_before_replacing_part_files() {
     // wait; the worker's own tests check that stopping writes nothing.
     app(&h).job.as_ref().unwrap().1.request_stop();
 }
+
+/// The save dialog asks about the name as typed. When the app adds ".mp3" to
+/// it, a file with the full name is asked about before it is replaced.
+#[test]
+fn saving_asks_before_replacing_a_file_whose_extension_was_added() {
+    let dir = tempfile::tempdir().unwrap();
+    let existing = dir.path().join("talk.mp3");
+    std::fs::write(&existing, b"old").unwrap();
+    let (mut h, script) = window();
+    choose_free_text(&mut h);
+    app_mut(&mut h).free_text = "Short.".to_owned();
+    let started = Instant::now();
+    while app_mut(&mut h).speech_job().is_err() {
+        assert!(started.elapsed() < Duration::from_secs(20), "the system voices never appeared");
+        h.run_steps(2);
+    }
+    script.files.borrow_mut().push_back(dir.path().join("talk"));
+    command(&mut h, Key::S);
+    assert_eq!(script.asked.borrow().last().unwrap(), "Replace files?");
+    assert_eq!(status(&h), "Nothing was saved, so the existing files are as they were.");
+    assert!(app(&h).job.is_none());
+    assert_eq!(std::fs::read(&existing).unwrap(), b"old");
+}
